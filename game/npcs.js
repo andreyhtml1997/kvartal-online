@@ -69,6 +69,7 @@ class Npcs {
       nextShot: 0, fireAt: 0, burstEnd: 0, burstPause: 0, aimJ: 0, strafe: Math.random() < 0.5 ? 1 : -1, strafeT: 1, shotAt: -10,
       veh: 0, team: null, slot: 0, burnUntil: 0, burnBy: 0, burnT: 0, deadAt: 0, amb: 0, ambient: false, stuck: 0, turn: 0
     }, o || {});
+    n.maxHp = n.maxHp || n.hp;
     this.list.set(n.id, n);
     return n;
   }
@@ -958,14 +959,14 @@ class Npcs {
   // ======================================================================
   // для браузера
   // ======================================================================
-  // [номер, x, y, угол, флаги, оружие, кто, вид]; флаги: 1 жив, 2 бежит, 4 выстрел, 8 лечит, 16 нападает, 32 горит
+  // [номер, x, y, угол, флаги, оружие, кто, вид, здоровье %]; флаги: 1 жив, 2 бежит, 4 выстрел, 8 лечит, 16 нападает, 32 горит
   snapFor(p, vw, vh) {
     const out = [], now = this.room.time;
     for (const n of this.list.values()) {
       if (n.state === 'incar' || Math.abs(n.x - p.x) > vw || Math.abs(n.y - p.y) > vh) continue;
       const fl = (n.alive ? 1 : 0) | (n.spd > 3 ? 2 : 0) | (now - n.shotAt < 0.15 ? 4 : 0) | (n.phase === 'heal' && n.state === 'medic' ? 8 : 0) |
         (n.state === 'fight' ? 16 : 0) | (n.burnUntil > now ? 32 : 0);
-      out.push([n.id, r2(n.x), r2(n.y), r3(n.a), fl, n.w, n.kind, n.look]);
+      out.push([n.id, r2(n.x), r2(n.y), r3(n.a), fl, n.w, n.kind, n.look, Math.max(0, Math.ceil((100 * n.hp) / n.maxHp))]);
     }
     return out;
   }

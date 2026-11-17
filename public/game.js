@@ -1782,10 +1782,10 @@
       }
     }
     // жители: [номер, x, y, угол, флаги, оружие, вид, внешность]
-    if (m.n) for (const [id, x, y, a, fl, w, kind, look] of m.n) {
+    if (m.n) for (const [id, x, y, a, fl, w, kind, look, hp] of m.n) {
       let n = S.peds.get(id);
       if (!n) { n = { id, snaps: [], rx: x, ry: y, ra: a, walk: 0, lx: null, ly: null, mvx: 0, mvy: 0 }; S.peds.set(id, n); }
-      n.fl = fl; n.w = w; n.kind = kind; n.look = look; n.seen = now;
+      n.fl = fl; n.w = w; n.kind = kind; n.look = look; n.seen = now; n.hp = hp === undefined ? 100 : hp;
       const last = n.snaps[n.snaps.length - 1];
       if (last && Math.hypot(last[1] - x, last[2] - y) > 6) n.snaps.length = 0;
       n.snaps.push([m.ts, x, y, a]);
@@ -2842,7 +2842,11 @@
         n.walk += Math.hypot(dx, dy) * 4.8;
       }
       n.lx = n.rx; n.ly = n.ry;
-      if (inView(n.rx - 1, n.ry - 1, 2, 2)) { drawPed(n, now); n.drawnAt = now; }
+      if (inView(n.rx - 1, n.ry - 1, 2, 2)) {
+        drawPed(n, now); n.drawnAt = now;
+        // полоска здоровья у раненого жителя (полиция, прохожие) - как у игроков, без имени
+        if ((n.fl & 1) && n.hp < 100) tags.push({ name: '', bot: true, x: n.rx, y: n.ry - 0.62, hp: n.hp, me: false });
+      }
     }
     for (const n of S.npcs) {
       const age = (now - n.t0) / 1000;

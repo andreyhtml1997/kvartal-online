@@ -45,6 +45,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(police >= 1, 'полиция видна на радаре');
     check(siren || copsNear > 0, 'полиция приехала: машина с мигалками или полицейские рядом');
     await pc.screenshot({ path: OUT + '/city_police.png' });
+    // ранили полицейского - над ним полоска здоровья (данные о здоровье жителей приходят в браузер)
+    await kv(() => window.__kv.send({ t: 'dbg', god: 1, weapon: 1 }));
+    let hurt = false;
+    for (let i = 0; i < 10 && !hurt; i++) {
+      const cop = await kv(() => { const S = window.__kv.S; let b = null, bd = 1e9; for (const n of S.peds.values()) if (n.kind === 1 && (n.fl & 1)) { const d = Math.hypot(n.rx - S.me.x, n.ry - S.me.y); if (d < bd) { bd = d; b = n; } } return b ? { x: b.rx, y: b.ry } : null; });
+      if (!cop) { await sleep(500); continue; }
+      const scr = await kv(c => { const v = window.__kv.S.view, dpr = document.getElementById('game').width / innerWidth; return { x: (c.x * v.tp + v.ox) / dpr, y: (c.y * v.tp + v.oy) / dpr }; }, cop);
+      await pc.mouse.move(scr.x, scr.y); await pc.mouse.down(); await sleep(300); await pc.mouse.up(); await sleep(400);
+      hurt = await kv(() => [...window.__kv.S.peds.values()].some(n => n.kind === 1 && (n.fl & 1) && n.hp < 100));
+    }
+    await pc.screenshot({ path: OUT + '/city_cop_hp.png' });
+    check(hurt, 'у раненого полицейского видно здоровье (полоска над ним)');
     // таблица счёта: колонки «Мирные» и «Полиция»
     await pc.keyboard.down('Tab');
     await sleep(300);
