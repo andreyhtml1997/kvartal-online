@@ -31,7 +31,7 @@ function emptyEvents() {
   // vx - взорвалась, fl - водитель убегает
   return {
     b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
-    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: []
+    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: []
   };
 }
 
@@ -57,6 +57,7 @@ class Room {
     this.ev = emptyEvents();
     this.emptySince = Date.now();
     this.sbDirty = true;
+    this.botsOn = true;           // переключатель «Боты» под шестерёнкой, на всю комнату
     this.bots = new Bots(this);
     this.vehicles = new Vehicles(this);
     this.fillBots();
@@ -115,7 +116,7 @@ class Room {
   fillBots() {
     const humans = this.humanCount();
     const bots = [...this.players.values()].filter(p => p.isBot);
-    const want = humans === 0 && this.tickNo > 0 ? 0 : Math.max(0, MIN_PLAYERS - humans);
+    const want = !this.botsOn || (humans === 0 && this.tickNo > 0) ? 0 : Math.max(0, MIN_PLAYERS - humans);
     let n = bots.length;
     while (n < want) {
       const used = new Set(bots.map(b => b.name));
@@ -180,7 +181,8 @@ class Room {
         roads: m.roads
       },
       players: [...this.players.values()].map(o => this.publicInfo(o)),
-      pickups: [...this.pickups.values()].map(pk => [pk.id, pk.kind, pk.w, r2(pk.x), r2(pk.y)])
+      pickups: [...this.pickups.values()].map(pk => [pk.id, pk.kind, pk.w, r2(pk.x), r2(pk.y)]),
+      bots: this.botsOn
     };
   }
 
@@ -199,12 +201,30 @@ class Room {
         if (p.vehicle && this.time - p.hornAt > 0.5) { p.hornAt = this.time; this.ev.hn.push(p.vehicle); }
         break;
       case 'ram': if (p.vehicle) this.vehicles.onRam(p, msg); break;
+      case 'push': if (p.vehicle) this.vehicles.onPush(p, msg.l); break;
+      case 'bots': {
+        const on = !!msg.on;
+        if (on === this.botsOn || this.time - (this.botsAt || -10) < 1) break;
+        this.botsOn = on;
+        this.botsAt = this.time;
+        this.fillBots();
+        this.ev.bo.push([on ? 1 : 0, p.name]);
+        break;
+      }
       case 'crash': if (p.vehicle) this.vehicles.onCrash(p, msg); break;
       case 'dbg':
         // только для автотестов на своём компьютере: на хостинге переменная KV_DEBUG не задана
         if (process.env.KV_DEBUG !== '1') break;
         if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
         if (msg.god) p.prot = this.time + 600;
+        if (msg.carAhead && p.vehicle) {
+          // стоящая машина прямо перед своей - для проверки толкания
+          const v = this.vehicles.list.get(p.vehicle);
+          if (v) {
+            const x = v.x + Math.cos(v.a) * 4.6, y = v.y + Math.sin(v.a) * 4.6;
+            if (!KV.carHitsHard(this.map, x, y, v.a, 0.05)) this.vehicles.create(x, y, v.a, 5, 'parked', null);
+          }
+        }
         if (msg.nearCar) {
           let best = null, bd = 1e9;
           for (const v of this.vehicles.list.values()) {
@@ -712,7 +732,10 @@ class Room {
     // кто стрелял последние 2.5 с - красная точка на миникарте у всех (кулаки не считаются)
     const l = [];
     for (const p of this.players.values()) if (p.alive && this.time - p.shotAt < 2.5 && p.cur !== W.FISTS) l.push([p.id, Math.round(p.x), Math.round(p.y)]);
-    const json = JSON.stringify({ t: 'mm', l });
+    // настоящие игроки видят друг друга на карте всегда
+    const h = [];
+    for (const p of this.players.values()) if (!p.isBot && p.alive) h.push([p.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
+    const json = JSON.stringify({ t: 'mm', l, h });
     for (const p of this.players.values()) if (!p.isBot) this.send(p, json);
   }
 

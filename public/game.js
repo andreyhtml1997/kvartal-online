@@ -42,7 +42,8 @@
     },
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
-    rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null
+    rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
+    humans: [], botsOn: true, pushAcc: new Map()
   };
 
   function makePlayer(id) {
@@ -1248,7 +1249,7 @@
         for (const [id, k, d] of m.l) { const p = S.players.get(id); if (p) { p.kills = k; p.deaths = d; } }
         if (!$('board').hidden) renderBoard();
         break;
-      case 'mm': S.pings = m.l; break;
+      case 'mm': S.pings = m.l; S.humans = m.h || []; break;
     }
   }
 
@@ -1281,6 +1282,9 @@
     $('a11yPanel').hidden = true;
     document.body.classList.add('playing');
     $('boardRoom').textContent = 'Комната ' + S.room;
+    S.botsOn = m.bots !== false;
+    S.humans = [];
+    syncBotsBtn();
     try { history.replaceState(null, '', '?room=' + encodeURIComponent(S.room)); } catch (_) {}
     syncA11y();
     updateRotateHint();
@@ -1323,6 +1327,11 @@
         c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now;
         const last = c.snaps[c.snaps.length - 1];
         if (last && Math.hypot(last[1] - x, last[2] - y) > 12) c.snaps.length = 0;
+        else if (last && m.ts > last[0]) {
+          const k = 1000 / (m.ts - last[0]);
+          c.vx = (c.vx || 0) * 0.4 + (x - last[1]) * k * 0.6;
+          c.vy = (c.vy || 0) * 0.4 + (y - last[2]) * k * 0.6;
+        }
         c.snaps.push([m.ts, x, y, a]);
         if (c.snaps.length > 12) c.snaps.shift();
       }
@@ -1432,6 +1441,11 @@
     if (m.vf) for (const id of m.vf) { const v = S.vehicles.get(id); if (v) Sound.fire(v.rx, v.ry); if (id === S.me.vehicle) toast('Машина горит - выходите!', 2500); }
     if (m.vx) for (const id of m.vx) S.vehicles.delete(id);
     if (m.fl) for (const [x, y, a] of m.fl) S.npcs.push({ x, y, a, t0: now, walk: 0, color: ['#8e44ad', '#16a085', '#d35400', '#7f8c8d'][Math.floor(Math.random() * 4)] });
+    if (m.bo) for (const [on, who] of m.bo) {
+      S.botsOn = !!on;
+      syncBotsBtn();
+      toast(on ? `${who} включил ботов` : `${who} выключил ботов`, 2500);
+    }
     if (m.en) for (const [vid, pid] of m.en) { if (pid !== S.myId) { const v = S.vehicles.get(vid); if (v) Sound.doorOpen(); } }
   }
 
@@ -1596,6 +1610,13 @@
   $('bigmap').addEventListener('click', () => showBig(false));
   mini.addEventListener('click', () => { Sound.init(); showBig(true); });
   mini.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showBig(true); } });
+  function syncBotsBtn() {
+    const b = $('btnBots');
+    b.setAttribute('aria-pressed', S.botsOn ? 'true' : 'false');
+    b.textContent = S.botsOn ? 'Боты: включены' : 'Боты: выключены';
+  }
+  $('btnBots').addEventListener('click', () => send({ t: 'bots', on: !S.botsOn }));
+
   function syncSoundBtn() {
     $('btnSound').setAttribute('aria-pressed', Sound.on ? 'true' : 'false');
     $('btnSound').textContent = Sound.on ? 'Звук: включён' : 'Звук: выключен';
@@ -1691,15 +1712,6 @@
     g.imageSmoothingEnabled = k < RB;
     const sx0 = Math.max(0, x0), sy0 = Math.max(0, y0), sx1 = Math.min(map.w, x0 + span), sy1 = Math.min(map.h, y0 + span);
     if (sx1 > sx0 && sy1 > sy0) g.drawImage(S.rbase, sx0 * RB, sy0 * RB, (sx1 - sx0) * RB, (sy1 - sy0) * RB, toX(sx0), toY(sy0), (sx1 - sx0) * k, (sy1 - sy0) * k);
-    // крыши
-    for (const b of map.buildings) {
-      if (!b.roof || b.x + b.w < x0 || b.y + b.h < y0 || b.x > x0 + span || b.y > y0 + span) continue;
-      g.fillStyle = b.pal[0];
-      g.fillRect(toX(b.x + 1), toY(b.y + 1), (b.w - 2) * k, (b.h - 2) * k);
-      g.strokeStyle = 'rgba(0,0,0,0.6)';
-      g.lineWidth = Math.max(1, k * 0.2);
-      g.strokeRect(toX(b.x + 1), toY(b.y + 1), (b.w - 2) * k, (b.h - 2) * k);
-    }
     const u = Math.max(1, size / 170); // размер значков
     // машины
     for (const v of S.vehicles.values()) {
@@ -1755,13 +1767,44 @@
       g.fillStyle = `rgba(255,50,50,${pulse})`;
       g.beginPath(); g.arc(toX(x + 0.5), toY(y + 0.5), 3.5 * u, 0, Math.PI * 2); g.fill();
     }
-    // люди рядом (кого видно на экране)
+    // люди рядом (кого видно на экране) - боты и игроки
+    const shownHumans = new Set();
     for (const p of S.players.values()) {
       if (p.id === S.myId || p.hidden || !(p.flags & 1) || (p.flags & 8)) continue;
+      if (!p.bot) shownHumans.add(p.id);
       g.fillStyle = p.color;
       g.strokeStyle = '#fff';
       g.lineWidth = Math.max(1, u * 0.8);
       g.beginPath(); g.arc(toX(p.rx), toY(p.ry), 3 * u, 0, Math.PI * 2); g.fill(); g.stroke();
+      if (!p.bot) drawMapName(g, p.name, toX(p.rx), toY(p.ry) - 5 * u, u);
+    }
+    // настоящие игроки видны всегда, где бы ни были: точка с именем, за краем радара - стрелка их цвета
+    for (const [id, hx, hy] of S.humans) {
+      if (id === S.myId) continue;
+      const p = S.players.get(id);
+      if (!p) continue;
+      let x = hx, y = hy;
+      if (shownHumans.has(id)) continue;
+      const px = toX(x), py = toY(y);
+      if (px >= 0 && py >= 0 && px <= size && py <= size) {
+        g.fillStyle = p.color;
+        g.strokeStyle = '#fff';
+        g.lineWidth = Math.max(1, u * 0.9);
+        g.beginPath(); g.arc(px, py, 3.6 * u, 0, Math.PI * 2); g.fill(); g.stroke();
+        drawMapName(g, p.name, px, py - 5.5 * u, u);
+      } else if (!full) {
+        const ang = Math.atan2(y - cy, x - cx);
+        const m = 10 * u;
+        const ex = clamp(size / 2 + Math.cos(ang) * size, m, size - m), ey = clamp(size / 2 + Math.sin(ang) * size, m, size - m);
+        g.save();
+        g.translate(ex, ey);
+        g.rotate(ang);
+        g.fillStyle = p.color;
+        g.strokeStyle = '#fff';
+        g.lineWidth = Math.max(1, u);
+        g.beginPath(); g.moveTo(6 * u, 0); g.lineTo(-4 * u, 5 * u); g.lineTo(-4 * u, -5 * u); g.closePath(); g.fill(); g.stroke();
+        g.restore();
+      }
     }
     // область экрана
     if (!full) {
@@ -1779,6 +1822,17 @@
       g.beginPath(); g.moveTo(z, 0); g.lineTo(-z * 0.7, z * 0.65); g.lineTo(-z * 0.35, 0); g.lineTo(-z * 0.7, -z * 0.65); g.closePath(); g.fill(); g.stroke();
       g.restore();
     }
+  }
+
+  function drawMapName(g, name, x, y, u) {
+    g.font = `700 ${Math.round(9 * u)}px system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'bottom';
+    g.lineWidth = Math.max(2, 2.5 * u);
+    g.strokeStyle = 'rgba(0,0,0,0.85)';
+    g.strokeText(name, x, y);
+    g.fillStyle = '#ffffff';
+    g.fillText(name, x, y);
   }
 
   function drawRadar(now) {
@@ -1918,9 +1972,18 @@
     const msg = { t: 'i', a: r3(S.me.a), f: fire ? 1 : 0, s: S.me.sprinting ? 1 : 0, v: [Math.round(S.view.hw), Math.round(S.view.hh)] };
     // до какой точки целимся: граната взрывается там, где прицел
     if (S.aimPt) msg.d = r2(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y));
-    if (S.me.vehicle && S.car) msg.c = [r2(S.car.x), r2(S.car.y), r3(S.car.a), r2(S.car.v), S.car.tp];
+    if (S.me.vehicle && S.car) {
+      const c = S.car;
+      msg.c = [r2(c.x), r2(c.y), r3(c.a), r2(c.v), c.tp, r2(Math.cos(c.a) * c.v + c.sx), r2(Math.sin(c.a) * c.v + c.sy)];
+    }
     else { msg.x = r2(S.me.x); msg.y = r2(S.me.y); msg.tp = S.me.tp; }
     S.ws.send(JSON.stringify(msg));
+    if (S.pushAcc.size) {
+      const l = [];
+      for (const [id, a] of S.pushAcc) l.push([id, r2(a.jx), r2(a.jy), r2(a.cx), r2(a.cy)]);
+      S.pushAcc.clear();
+      S.ws.send(JSON.stringify({ t: 'push', l }));
+    }
   }
 
   // своя машина: физика как на сервере, столкновения с другими машинами - тараном
@@ -1948,21 +2011,38 @@
       send({ t: 'crash', s: r2(res.impact) });
       if (!a11y('motion')) S.shake = Math.max(S.shake, Math.min(1.2, res.impact / 10));
     }
+    // столкновения с другими машинами: свою половину удара считаем здесь, чужую - сервер или браузер её водителя.
+    // Машина с водителем-NPC от лёгкого толчка не сдвигается (как стена), от сильного - водитель выскакивает.
     for (const o of S.vehicles.values()) {
       if (o.id === car.id || now - o.seen > 600) continue;
-      const mtv = KV.obbObbMTV(car.x, car.y, car.a, o.rx, o.ry, o.ra, CAR.HL, CAR.HW);
-      if (!mtv) continue;
-      car.x += mtv[0]; car.y += mtv[1];
-      KV.resolveCar(S.map, car, new Set(S.rammed.keys()));
-      const ml = Math.hypot(mtv[0], mtv[1]) || 1, nx = mtv[0] / ml, ny = mtv[1] / ml;
-      const into = -((Math.cos(car.a) * car.v + car.sx) * nx + (Math.sin(car.a) * car.v + car.sy) * ny);
-      if (into > 0) {
-        car.v *= 0.3;
-        if (into > 3 && now - (S.ramAt.get(o.id) || 0) > 400) {
-          S.ramAt.set(o.id, now);
-          send({ t: 'ram', id: o.id, s: r2(into) });
-          if (!a11y('motion')) S.shake = Math.max(S.shake, Math.min(1.2, into / 10));
+      if (Math.abs(o.rx - car.x) > 4.6 || Math.abs(o.ry - car.y) > 4.6) continue;
+      const other = { x: o.rx, y: o.ry, a: o.ra };
+      const ovx = o.vx || 0, ovy = o.vy || 0;
+      let isStatic = false;
+      if (o.fl & 4) {
+        const mtv = KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, CAR.HL, CAR.HW);
+        if (mtv) {
+          const ml = Math.hypot(mtv[0], mtv[1]) || 1;
+          const rel = ((Math.cos(car.a) * car.v + car.sx - ovx) * mtv[0] + (Math.sin(car.a) * car.v + car.sy - ovy) * mtv[1]) / ml;
+          isStatic = -rel < 4;
         }
+      }
+      const hit = KV.carCollide(car, other, ovx, ovy, { aOnly: true, bStatic: isStatic });
+      if (!hit) continue;
+      const imp = hit.impact;
+      KV.resolveCar(S.map, car, new Set(S.rammed.keys()));
+      // толчок второй машине: её двигает сервер (стоящие, машины ботов и NPC) - передаём ему
+      const od = o.driver ? S.players.get(o.driver) : null;
+      if (!(od && !od.bot && !(o.fl & 4)) && (hit.jx || hit.jy)) {
+        const acc = S.pushAcc.get(o.id) || { jx: 0, jy: 0, cx: hit.px, cy: hit.py };
+        acc.jx += hit.jx; acc.jy += hit.jy; acc.cx = hit.px; acc.cy = hit.py;
+        S.pushAcc.set(o.id, acc);
+      }
+      if (imp > 3 && now - (S.ramAt.get(o.id) || 0) > 400) {
+        S.ramAt.set(o.id, now);
+        const d = o.driver ? S.players.get(o.driver) : null;
+        if (d && !d.bot && !(o.fl & 4)) send({ t: 'ram', id: o.id, s: r2(imp) }); // удар двух игроков - урон считает сервер
+        if (!a11y('motion')) S.shake = Math.max(S.shake, Math.min(1.2, imp / 10));
       }
     }
     S.me.x = car.x; S.me.y = car.y;
@@ -2120,7 +2200,6 @@
         }
       }
       p.lx = p.rx; p.ly = p.ry;
-      if (bid >= 0 && bid !== myB && map.buildings[bid].alpha > 0.5) continue; // под крышей - не видно
       p.hidden = false;
       if (!inView(p.rx - 1, p.ry - 1, 2, 2)) continue;
       const moving = Math.hypot(p.mvx, p.mvy) > 1;
@@ -2157,7 +2236,6 @@
     drawBullets(now);
     drawParticles(false);
     drawCanopies(x0, y0, x1, y1);
-    drawRoofs(dt, inView, myB);
     drawParticles(true);
     drawEffects(now);
 

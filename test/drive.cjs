@@ -18,7 +18,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await pc.click('#btnJoin');
     await pc.waitForFunction(() => window.__kv && window.__kv.S.me.alive, null, { timeout: 30000 });
     await sleep(800);
-    const kv = f => pc.evaluate(f);
+    const kv = (f, arg) => pc.evaluate(f, arg);
 
     // рывок: с Shift бежит быстрее, выносливость тратится
     await kv(() => window.__kv.send({ t: 'dbg', god: 1 }));
@@ -47,6 +47,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await pc.waitForFunction(() => window.__kv.S.me.vehicle > 0, null, { timeout: 5000 }).catch(() => {});
     const inCar = await kv(() => window.__kv.S.me.vehicle);
     check(inCar > 0, 'сел в машину по F');
+    // толкание: стоящая машина прямо перед нашей, газ в упор - она должна поехать вперёд
+    await kv(() => window.__kv.send({ t: 'dbg', carAhead: 1 }));
+    await sleep(800);
+    const ahead = await kv(() => {
+      const S = window.__kv.S, my = S.car;
+      let best = null, bd = 1e9;
+      for (const v of S.vehicles.values()) {
+        if (v.id === S.me.vehicle) continue;
+        const d = Math.hypot(v.rx - my.x - Math.cos(my.a) * 4.6, v.ry - my.y - Math.sin(my.a) * 4.6);
+        if (d < bd) { bd = d; best = { id: v.id, x: v.rx, y: v.ry, d }; }
+      }
+      return best;
+    });
+    if (ahead && ahead.d < 1) {
+      await pc.keyboard.down('KeyW'); await sleep(1600);
+      await pc.screenshot({ path: OUT + '/push.png' });
+      await pc.keyboard.up('KeyW'); await sleep(500);
+      const after = await kv(id => { const v = window.__kv.S.vehicles.get(id); return v ? { x: v.rx, y: v.ry } : null; }, ahead.id);
+      const pushed = after ? Math.hypot(after.x - ahead.x, after.y - ahead.y) : 0;
+      console.log(`толкание: стоящую машину сдвинули на ${pushed.toFixed(1)} м`);
+      check(pushed > 1.5, 'машина с газом толкает стоящую машину');
+    } else console.log('перед машиной нет места для второй машины - толкание не проверено');
     const c0 = await kv(() => ({ x: window.__kv.S.car.x, y: window.__kv.S.car.y, tp: window.__kv.S.car.tp }));
     await pc.keyboard.down('KeyW'); await sleep(1200);
     await pc.screenshot({ path: OUT + '/driving.png' });
@@ -79,6 +101,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(200);
     check(!(await pc.isVisible('#bigmap')), 'карта закрывается нажатием');
 
+    // крыш нет: здания всегда открыты (на экране нет полупрозрачных крыш, игроки в домах видны)
+    check(await kv(() => typeof window.__kv.S.map.buildings[0] === 'object'), 'в городе есть дома');
+
     // телефон: кнопка рывка при движении
     const ph = await (await browser.newContext({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true })).newPage();
     ph.on('pageerror', e => errors.push('phone: ' + e.message));
@@ -92,6 +117,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 170, y: 290, id: 1 }] });
     await sleep(400);
     check(await ph.isVisible('#btnSprint'), 'на телефоне при движении видна кнопка рывка');
+    // настоящие игроки видят друг друга на карте, где бы ни были
+    await sleep(1200);
+    const phoneId = await ph.evaluate(() => window.__kv.S.myId);
+    const seen = await kv(id => window.__kv.S.humans.some(h => h[0] === id), phoneId);
+    check(seen, 'компьютер видит игрока с телефона на карте');
+    // режим без ботов: выключаем под шестерёнкой - боты исчезают, включаем - возвращаются
+    await pc.click('#btnMenu');
+    await pc.click('#btnBots');
+    await sleep(1200);
+    const noBots = await kv(() => [...window.__kv.S.players.values()].filter(p => p.bot).length);
+    check(noBots === 0, `переключатель «Боты: выключены» убирает ботов (осталось ${noBots})`);
+    check((await pc.textContent('#btnBots')).includes('выключены'), 'кнопка показывает, что боты выключены');
+    await pc.click('#btnBots');
+    await sleep(1200);
+    const backBots = await kv(() => [...window.__kv.S.players.values()].filter(p => p.bot).length);
+    check(backBots >= 1, `боты возвращаются (${backBots})`);
+    await pc.keyboard.press('Escape');
     // прицел под пальцем: касание правее и выше персонажа - перекрестие ровно под пальцем
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await sleep(200);

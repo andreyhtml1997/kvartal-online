@@ -13,6 +13,7 @@ const { CAR, CAR_BLAST } = KV;
 
 const TRAFFIC_TARGET = 10;
 const TRAFFIC_SPEED = 9.5;
+const KNOCK = 4;             // м/с: удар сильнее - водитель-NPC выскакивает, машину отбрасывает
 const PARKED_RESPAWN = 120;   // с - через сколько на месте взорванной машины с парковки появится новая
 const EXTRA_VEHICLES = 14;   // сколько машин сверх припаркованных и машин с водителями (брошенные и т.п.)
 const r2 = v => Math.round(v * 100) / 100;
@@ -40,7 +41,7 @@ class Vehicles {
 
   create(x, y, a, color, state, spawn) {
     const v = {
-      id: this.nextId++, x, y, a, v: 0, sx: 0, sy: 0, color, hp: CAR.HP, state, driver: 0, lastDriver: 0, ai: null,
+      id: this.nextId++, x, y, a, v: 0, sx: 0, sy: 0, w: 0, hvx: 0, hvy: 0, color, hp: CAR.HP, state, driver: 0, lastDriver: 0, ai: null,
       burn: 0, lastAttacker: 0, hitCd: new Map(), rams: new Map(), brake: false, hornAt: -10, seenT: 0, stuckT: 0,
       tp: 0, budget: 0, lastMoveTime: this.room.time, crashAt: -10, spawn: spawn || null, dead: false, born: this.room.time
     };
@@ -237,42 +238,80 @@ class Vehicles {
     for (const k of res.rammed) this.room.destroyTile(k, credit);
     if (res.impact > 6) this.damage(v, (res.impact - 5) * 6, v.lastAttacker || credit);
     if (res.impact > 3 && this.room.time - v.crashAt > 0.3) { v.crashAt = this.room.time; this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(res.impact)]); }
-    for (const o of this.list.values()) {
-      if (o === v || o.dead) continue;
-      const mtv = KV.obbObbMTV(v.x, v.y, v.a, o.x, o.y, o.a, CAR.HL, CAR.HW);
-      if (!mtv) continue;
-      v.x += mtv[0]; v.y += mtv[1];
-      const back = KV.resolveCar(this.map, v);
-      for (const k of back.rammed) this.room.destroyTile(k, credit);
-      const ml = Math.hypot(mtv[0], mtv[1]) || 1, nx = mtv[0] / ml, ny = mtv[1] / ml;
-      const c = Math.cos(v.a), s = Math.sin(v.a);
-      const into = -((c * v.v + v.sx) * nx + (s * v.v + v.sy) * ny);
-      if (into > 0) {
-        v.v *= 0.3;
-        const sd = v.sx * nx + v.sy * ny;
-        if (sd < 0) { v.sx -= nx * sd; v.sy -= ny * sd; }
-        if (into > 3) this.ram(v, o, into, -nx, -ny, credit);
-      }
-    }
-    // если после толчков машина всё же осталась в стене - возвращаем её на место до шага
+    // если машина всё же осталась в стене - возвращаем её на место до шага
     if (KV.carOverlapsSolid(this.map, v.x, v.y, v.a, 0.03, null) && !KV.carOverlapsSolid(this.map, bx, by, ba, 0.03, null)) {
-      v.x = bx; v.y = by; v.a = ba; v.v = 0; v.sx = 0; v.sy = 0;
+      v.x = bx; v.y = by; v.a = ba; v.v = 0; v.sx = 0; v.sy = 0; v.w = 0;
     }
   }
 
-  // Удар машины a в машину b; (nx, ny) - направление от a к b
-  ram(a, b, impact, nx, ny, attackerId) {
+  // ---------- столкновения машин между собой: толкаются по законам импульса ----------
+  // Кого двигает сервер: стоящие/брошенные и машины ботов. Машину игрока двигает его браузер,
+  // машина с водителем-NPC едет по полосе и от лёгких толчков не сдвигается.
+  velOf(v) {
+    if (v.state === 'human') return [v.hvx || 0, v.hvy || 0];
+    const c = Math.cos(v.a), s = Math.sin(v.a);
+    if (v.state === 'traffic') return [c * v.v, s * v.v];
+    return [c * v.v + v.sx, s * v.v + v.sy];
+  }
+
+  collisions() {
+    const list = [...this.list.values()].filter(v => !v.dead);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j];
+        if (a.dead || b.dead || Math.abs(a.x - b.x) > 4.6 || Math.abs(a.y - b.y) > 4.6) continue;
+        if (a.state === 'human' && b.state === 'human') continue; // такие удары считают браузеры игроков
+        if (a.state === 'traffic' && b.state === 'traffic') continue; // водители-NPC между собой не бьются
+        this.collidePair(a, b);
+      }
+    }
+  }
+
+  collidePair(a, b) {
+    const mtv = KV.obbObbMTV(a.x, a.y, a.a, b.x, b.y, b.a, CAR.HL, CAR.HW);
+    if (!mtv) return;
+    const ml = Math.hypot(mtv[0], mtv[1]) || 1e-6;
+    const nx = mtv[0] / ml, ny = mtv[1] / ml; // от b к a
+    const [avx, avy] = this.velOf(a), [bvx, bvy] = this.velOf(b);
+    const rel = (avx - bvx) * nx + (avy - bvy) * ny;
+    const impact = Math.max(0, -rel);
+    // сильный удар - водитель-NPC выскакивает, дальше машина толкается как любая другая
+    if (impact >= KNOCK) { if (a.state === 'traffic') this.npcFlee(a); if (b.state === 'traffic') this.npcFlee(b); }
+    const dyn = v => v.state === 'parked' || v.state === 'bot';
+    const aMov = dyn(a), bMov = dyn(b);
+    if (aMov || bMov) {
+      const ax0 = a.x, ay0 = a.y, bx0 = b.x, by0 = b.y;
+      if (aMov && bMov) { a.x += mtv[0] / 2; a.y += mtv[1] / 2; b.x -= mtv[0] / 2; b.y -= mtv[1] / 2; }
+      else if (aMov) { a.x += mtv[0]; a.y += mtv[1]; }
+      else { b.x -= mtv[0]; b.y -= mtv[1]; }
+      // в стену не выталкиваем: если некуда - остаётся на месте
+      for (const [v, x0, y0] of [[a, ax0, ay0], [b, bx0, by0]]) {
+        if (!dyn(v)) continue;
+        KV.resolveCar(this.map, v);
+        if (KV.carOverlapsSolid(this.map, v.x, v.y, v.a, 0.03, null)) { v.x = x0; v.y = y0; }
+      }
+      // толчки от машины игрока присылает его браузер (onPush); здесь - только удары бота в игрока
+      const humanVsStill = (a.state === 'human' && b.state === 'parked') || (b.state === 'human' && a.state === 'parked');
+      if (rel < 0 && !humanVsStill) {
+        const jFull = -1.3 * rel;
+        // машина игрока - обычная масса (свою половину удара она посчитает сама), NPC неподвижен
+        const ja = aMov ? (bMov || b.state === 'human' ? jFull / 2 : jFull) : 0;
+        const jb = bMov ? (aMov || a.state === 'human' ? jFull / 2 : jFull) : 0;
+        if (ja) { const p = KV.carContactPoint(a, b.x, b.y); KV.applyImpulse(a, nx * ja, ny * ja, p[0], p[1]); }
+        if (jb) { const p = KV.carContactPoint(b, a.x, a.y); KV.applyImpulse(b, -nx * jb, -ny * jb, p[0], p[1]); }
+      }
+    }
+    if (impact > 3) this.crash(a, b, impact, a.driver || b.driver || a.lastDriver || b.lastDriver);
+  }
+
+  // Урон и звук удара двух машин (не чаще раза в 0.4 с на пару)
+  crash(a, b, impact, attackerId) {
     const now = this.room.time;
     if (now - (a.rams.get(b.id) || -10) < 0.4) return;
     a.rams.set(b.id, now);
     const dmg = Math.max(0, impact - 3) * 5;
-    this.damage(a, dmg * 0.6, attackerId);
-    this.damage(b, dmg, attackerId);
-    if (b.state === 'parked' || b.state === 'bot') { b.sx += nx * impact * 0.7; b.sy += ny * impact * 0.7; }
-    else if (b.state === 'human') {
-      const d = this.room.players.get(b.driver);
-      if (d) this.room.send(d, { t: 'vk', x: r2(nx * impact * 0.6), y: r2(ny * impact * 0.6) });
-    }
+    this.damage(a, dmg * 0.7, attackerId);
+    this.damage(b, dmg * 0.7, attackerId);
     this.room.ev.cr.push([r2((a.x + b.x) / 2), r2((a.y + b.y) / 2), Math.round(impact)]);
   }
 
@@ -450,17 +489,47 @@ class Vehicles {
     v.budget -= dist;
     v.x = x; v.y = y; v.a = a;
     v.v = Math.max(-CAR.REV, Math.min(CAR.MAX * 1.05, spd));
+    // полная скорость машины (с заносом от ударов) - чтобы толкать стоящие машины правильно
+    const hvx = Number(c[5]), hvy = Number(c[6]);
+    v.hvx = Number.isFinite(hvx) ? Math.max(-25, Math.min(25, hvx)) : Math.cos(a) * v.v;
+    v.hvy = Number.isFinite(hvy) ? Math.max(-25, Math.min(25, hvy)) : Math.sin(a) * v.v;
     p.x = x; p.y = y;
     if (Math.abs(v.v) > KV.RAM_SPEED * 0.75) for (const k of KV.carOverlapTiles(this.map, x, y, a, 0.05, [])) room.destroyTile(k, p.id);
   }
 
+  // Машина игрока толкнула другую (не игрока): браузер присылает толчок, сервер передаёт его той машине.
+  // list: [[id, jx, jy, cx, cy], ...] - сумма толчков за ~50 мс.
+  onPush(p, list) {
+    const v = this.list.get(p.vehicle);
+    if (!v || v.state !== 'human' || v.driver !== p.id || !Array.isArray(list)) return;
+    for (const e of list.slice(0, 6)) {
+      if (!Array.isArray(e)) continue;
+      const o = this.list.get(e[0] | 0);
+      if (!o || o.dead || o === v || o.state === 'human') continue;
+      if (Math.hypot(o.x - v.x, o.y - v.y) > 6.5) continue;
+      let jx = Number(e[1]), jy = Number(e[2]);
+      let cx = Number(e[3]), cy = Number(e[4]);
+      if (![jx, jy].every(Number.isFinite)) continue;
+      if (!Number.isFinite(cx) || !Number.isFinite(cy) || Math.hypot(cx - o.x, cy - o.y) > 3) { cx = o.x; cy = o.y; }
+      const jm = Math.hypot(jx, jy);
+      if (jm > 25) { jx *= 25 / jm; jy *= 25 / jm; }
+      if (o.state === 'traffic') {
+        if (jm < 2.6) continue; // лёгкий толчок - NPC едет дальше
+        this.npcFlee(o);
+      }
+      KV.applyImpulse(o, jx, jy, cx, cy);
+      const impact = jm / 0.65;
+      if (impact > 3) this.crash(v, o, impact, p.id);
+    }
+  }
+
+  // удар двух машин игроков: толкание считают их браузеры, сервер - только урон и звук
   onRam(p, m) {
     const v = this.list.get(p.vehicle), o = this.list.get(m.id | 0);
-    if (!v || !o || o === v || o.dead || v.state !== 'human' || v.driver !== p.id) return;
-    const s = Math.min(Number(m.s) || 0, CAR.MAX * 1.3);
+    if (!v || !o || o === v || o.dead || v.state !== 'human' || v.driver !== p.id || o.state !== 'human') return;
+    const s = Math.min(Number(m.s) || 0, CAR.MAX * 2);
     if (!(s > 3) || Math.hypot(o.x - v.x, o.y - v.y) > 6.5) return;
-    const nx = o.x - v.x, ny = o.y - v.y, l = Math.hypot(nx, ny) || 1;
-    this.ram(v, o, s, nx / l, ny / l, p.id);
+    this.crash(v, o, s, p.id);
   }
 
   onCrash(p, m) {
@@ -489,7 +558,9 @@ class Vehicles {
           if (d.vehicle === v.id) { this.physics(v, ctl[0], ctl[1], dt, d.id); d.x = v.x; d.y = v.y; }
         }
       } else if (v.state === 'parked') {
-        if (Math.abs(v.v) > 0.02 || Math.abs(v.sx) > 0.02 || Math.abs(v.sy) > 0.02) this.physics(v, 0, 0, dt, 0);
+        const moving = Math.abs(v.v) > 0.02 || Math.abs(v.sx) > 0.02 || Math.abs(v.sy) > 0.02 || Math.abs(v.w) > 0.02;
+        if (moving) this.physics(v, 0, 0, dt, 0);
+        v.idleT = moving ? 0 : (v.idleT || 0) + dt;
         v.brake = false;
       } else if (v.state === 'human') {
         const d = room.players.get(v.driver);
@@ -500,6 +571,14 @@ class Vehicles {
         if (v.burn <= 0) { this.explodeVehicle(v); continue; }
       }
       this.checkHits(v);
+    }
+    this.collisions();
+    // «эвакуатор»: брошенные машины не со стоянки (выбитые NPC, оставленные игроками), которые давно
+    // стоят вдали от игроков, убираем - иначе они забивают дороги и лимит машин
+    if (room.tickNo % 30 === 0) {
+      for (const v of [...this.list.values()]) {
+        if (v.state === 'parked' && !v.spawn && (v.idleT || 0) > 45 && v.burn <= 0 && !this.seenByHumans(v.x, v.y, 30)) this.remove(v);
+      }
     }
     let traffic = 0;
     for (const v of this.list.values()) if (v.state === 'traffic') traffic++;

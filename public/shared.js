@@ -260,11 +260,14 @@
   }
 
   /*
-   * Один шаг физики машины. car: {x, y, a, v, sx, sy}; throttle и steer от -1 до 1.
+   * Один шаг физики машины. car: {x, y, a, v, sx, sy, w}; v - скорость вдоль кузова, (sx, sy) - занос,
+   * w - вращение от ударов (рад/с); throttle и steer от -1 до 1.
    * ignore - Set клеток, которые уже проломлены (ещё не подтверждены сервером).
    * Возвращает { impact: сила удара о твёрдое, rammed: [проломленные клетки] }.
    */
   function stepVehicle(map, car, throttle, steer, dt, ignore) {
+    const px = car.x, py = car.y, pa = car.a;
+    if (!car.w) car.w = 0;
     if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : CAR.ACCEL) * throttle * dt;
     else if (throttle < 0) car.v += (car.v > 0 ? CAR.BRAKE : CAR.ACCEL * 0.6) * throttle * dt;
     else { const r = CAR.ROLL * dt; car.v = Math.abs(car.v) <= r ? 0 : car.v - Math.sign(car.v) * r; }
@@ -272,15 +275,16 @@
     if (car.v > CAR.MAX) car.v = CAR.MAX;
     if (car.v < -CAR.REV) car.v = -CAR.REV;
     const sf = car.v / (Math.abs(car.v) + 2.5);
-    car.a += steer * CAR.STEER * sf * dt;
-    const fr = Math.exp(-5 * dt);
+    car.a += (steer * CAR.STEER * sf + car.w) * dt;
+    car.w *= Math.exp(-2.5 * dt);
+    if (Math.abs(car.w) < 0.01) car.w = 0;
+    const fr = Math.exp(-3.5 * dt);
     car.sx *= fr; car.sy *= fr;
     const c0 = Math.cos(car.a), s0 = Math.sin(car.a);
     const mx = (c0 * car.v + car.sx) * dt, my = (s0 * car.v + car.sy) * dt;
     const n = Math.max(1, Math.ceil(Math.hypot(mx, my) / 0.25));
     const res = { impact: 0, rammed: [] };
     const ign = ignore || new Set();
-    const px = car.x, py = car.y, pa = car.a - steer * CAR.STEER * sf * dt;
     for (let i = 0; i < n; i++) {
       car.x += mx / n; car.y += my / n;
       resolveCarTiles(map, car, res, ign);
@@ -288,9 +292,62 @@
     // зажало между препятствиями и вытолкнуть не вышло - шаг отменяется, машина остаётся где была
     if (carOverlapsSolid(map, car.x, car.y, car.a, 0.03, ign) && !carOverlapsSolid(map, px, py, pa, 0.03, ign)) {
       car.x = px; car.y = py; car.a = pa;
-      car.v = 0; car.sx = 0; car.sy = 0;
+      car.v = 0; car.sx = 0; car.sy = 0; car.w = 0;
     }
+    if (res.impact > 2) car.w *= 0.5;
     return res;
+  }
+
+  // ---------- столкновения машин между собой ----------
+  // Толчок (jx, jy) в точке (px, py): меняет скорость и закручивает машину, если удар не по центру
+  function applyImpulse(car, jx, jy, px, py) {
+    const c = Math.cos(car.a), s = Math.sin(car.a);
+    const vx = c * car.v + car.sx + jx, vy = s * car.v + car.sy + jy;
+    car.v = vx * c + vy * s;
+    car.sx = vx - c * car.v;
+    car.sy = vy - s * car.v;
+    const rx = px - car.x, ry = py - car.y;
+    car.w = (car.w || 0) + ((rx * jy - ry * jx) / 1.65) * 0.6; // 1.65 - момент инерции кузова 4x1.9 м
+    if (car.w > 4) car.w = 4;
+    if (car.w < -4) car.w = -4;
+  }
+
+  // Ближайшая к точке (x, y) точка кузова машины - туда приходится удар
+  function carContactPoint(car, x, y) {
+    const c = Math.cos(car.a), s = Math.sin(car.a);
+    const dx = x - car.x, dy = y - car.y;
+    const lx = Math.max(-CAR.HL, Math.min(CAR.HL, dx * c + dy * s));
+    const ly = Math.max(-CAR.HW, Math.min(CAR.HW, -dx * s + dy * c));
+    return [car.x + lx * c - ly * s, car.y + lx * s + ly * c];
+  }
+
+  /*
+   * Удар двух машин по законам импульса (массы равны, упругость 0.3) + разворот от удара не по центру.
+   * a и b - машины {x, y, a, v, sx, sy, w}; bvx, bvy - скорость b вектором.
+   * opts.aOnly - менять только a (вторую машину посчитает её владелец: сервер или браузер другого игрока);
+   * opts.bStatic - b не сдвигается (как стена): a получает весь толчок и всё раздвигание.
+   * Возвращает null или { impact: скорость сближения, jx, jy: толчок для b, px, py: точка удара на b }.
+   */
+  function carCollide(a, b, bvx, bvy, opts) {
+    const o = opts || {};
+    const mtv = obbObbMTV(a.x, a.y, a.a, b.x, b.y, b.a, CAR.HL, CAR.HW);
+    if (!mtv) return null;
+    const ml = Math.hypot(mtv[0], mtv[1]) || 1e-6;
+    const nx = mtv[0] / ml, ny = mtv[1] / ml; // от b к a
+    const shareA = o.bStatic ? 1 : 0.5;
+    a.x += mtv[0] * shareA; a.y += mtv[1] * shareA;
+    if (!o.aOnly && !o.bStatic) { b.x -= mtv[0] * 0.5; b.y -= mtv[1] * 0.5; }
+    const ca = Math.cos(a.a), sa = Math.sin(a.a);
+    const avx = ca * a.v + a.sx, avy = sa * a.v + a.sy;
+    const rel = (avx - bvx) * nx + (avy - bvy) * ny;
+    if (rel >= 0) return null;
+    const jFull = -1.3 * rel;
+    const j = o.bStatic ? jFull : jFull / 2;
+    const pa = carContactPoint(a, b.x, b.y);
+    applyImpulse(a, nx * j, ny * j, pa[0], pa[1]);
+    const pb = carContactPoint(b, a.x, a.y);
+    if (!o.aOnly && !o.bStatic) applyImpulse(b, -nx * j, -ny * j, pb[0], pb[1]);
+    return { impact: -rel, jx: o.bStatic ? 0 : -nx * j, jy: o.bStatic ? 0 : -ny * j, px: pb[0], py: pb[1] };
   }
 
   function resolveCarTiles(map, car, res, ign) {
@@ -377,6 +434,7 @@
     G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
     obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
+    applyImpulse, carContactPoint, carCollide,
     damageStage, rleEncode, rleDecode
   };
 });
