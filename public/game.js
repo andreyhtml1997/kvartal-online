@@ -1517,6 +1517,95 @@
   // Голосовой чат: микрофон -> 16 кГц -> IMA ADPCM 4 бита (~8 КБ/с, только пока говорите) -> сервер -> все, кто в голосе.
   // Микрофон включается сам, когда слышит голос (порог подстраивается под шум комнаты).
   // ======================================================================
+  // ======================================================================
+  // Радио в машине (17.11.2026): настоящие интернет-станции с русскими хитами 90-х и 2000-х. Потоки - только на
+  // хостингах вне России: российские (hostingradio.ru, myradio24) в части сетей заблокированы и молчат.
+  // Q/E - соседняя станция (последняя позиция - «выключено»), на телефоне - кнопка «Радио». Станция не заиграла
+  // за 8 с или оборвалась - радио само переходит на следующую; не ответила ни одна - выключается до следующей просьбы.
+  // Выбор запоминается. Звук игры выключен - радио молчит и поток не качается.
+  // ======================================================================
+  const RADIO = [
+    { name: '90-е Россия', url: 'https://stream03.pcradio.app/nineties_rus_pcradio-hi' },
+    { name: 'Диско 90-х', url: 'https://stream.laut.fm/radio90s' },
+    { name: 'Русский хит', url: 'https://securestreams6.autopo.st:2130/onlyrussian' },
+    { name: 'Хиты 2000-х', url: 'https://radio3.dixi.md/listen/hit_fm_2000s_hits/hitfm2000hit128.aac' },
+    { name: 'Ретро FM Рига', url: 'https://live.retrofm.lv/retrofmlatvia' },
+    { name: 'Ретро FM Молдова', url: 'https://efir.retrofm.md:8000/retro' }
+  ];
+  const Radio = (() => {
+    // пустой звук: на iPhone первое воспроизведение разрешено только в нажатии - «будим» плеер при посадке
+    const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    const el = new Audio();
+    el.preload = 'none';
+    let idx = 0;            // станция; -1 - выключено
+    let active = false;     // сидим в машине - радио в работе
+    let state = 'off';      // off | tuning | on
+    let fails = 0, timer = 0, primed = false;
+    // номер настройки: отказ play() и ошибки прошлой станции (её оборвал переход на другую) не считаются провалом новой
+    let gen = 0;
+    let dir = 1;            // куда листали в последний раз: молчащую станцию пропускаем в ту же сторону
+    try { const s = localStorage.getItem('kv_radio'); if (s !== null) idx = Math.max(-1, Math.min(RADIO.length - 1, Number(s) | 0)); } catch (_) {}
+    function save() { try { localStorage.setItem('kv_radio', String(idx)); } catch (_) {} }
+    function show() {
+      const tag = $('radioTag'), btn = $('btnRadio');
+      if (tag) {
+        tag.hidden = !active;
+        tag.classList.toggle('tuning', state === 'tuning');
+        tag.textContent = idx < 0 ? (isTouch ? '♪ радио выключено' : '♪ радио выключено · Q/E') : '♪ ' + RADIO[idx].name + (state === 'tuning' ? '...' : '');
+      }
+      if (btn) btn.classList.toggle('on', active && idx >= 0 && state === 'on');
+    }
+    function halt() {
+      clearTimeout(timer);
+      try { el.pause(); } catch (_) {}
+      if (el.getAttribute('src')) { el.removeAttribute('src'); try { el.load(); } catch (_) {} }
+    }
+    function tune() {
+      halt();
+      if (!active || idx < 0 || !Sound.on || document.hidden) { state = 'off'; show(); return; }
+      state = 'tuning'; show();
+      const my = ++gen;
+      el.src = RADIO[idx].url;
+      el.volume = 0.6;
+      try { const p = el.play(); if (p && p.catch) p.catch(e => { if (my === gen && (!e || e.name !== 'AbortError')) fail(); }); } catch (_) { fail(); }
+      timer = setTimeout(() => { if (my === gen && state === 'tuning') fail(); }, 8000);
+    }
+    // станция молчит: следующая; все молчат - выключаемся
+    function fail() {
+      if (!active || idx < 0 || state === 'off') return;
+      if (++fails >= RADIO.length) { fails = 0; halt(); state = 'off'; show(); toast('Радио не ловит - ни одна станция не отвечает', 2600); return; }
+      idx = (idx + dir + RADIO.length) % RADIO.length;
+      tune();
+    }
+    el.addEventListener('playing', () => { if (state === 'tuning') { state = 'on'; fails = 0; clearTimeout(timer); save(); show(); } });
+    const current = () => idx >= 0 && el.getAttribute('src') === RADIO[idx].url;
+    el.addEventListener('error', () => { if (el.error && current()) fail(); });
+    el.addEventListener('ended', () => { if (state !== 'off' && current()) fail(); });
+    document.addEventListener('visibilitychange', () => { if (active) tune(); });
+    return {
+      get active() { return active; },
+      get station() { return idx >= 0 ? RADIO[idx].name : ''; },
+      get state() { return state; },
+      prime() {
+        if (primed) return;
+        primed = true;
+        try { el.src = SILENT; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+      },
+      enter() { if (active) return; active = true; fails = 0; dir = 1; tune(); },
+      leave() { if (!active) return; active = false; halt(); state = 'off'; show(); },
+      // d = +1 / -1: соседняя станция; позиция после последней - «выключено»
+      step(d) {
+        if (!active) return;
+        const n = RADIO.length + 1;
+        const pos = ((idx < 0 ? RADIO.length : idx) + d + n) % n;
+        idx = pos === RADIO.length ? -1 : pos;
+        dir = d < 0 ? -1 : 1;
+        fails = 0; save(); tune();
+      },
+      sync() { if (active) tune(); }
+    };
+  })();
+
   const Voice = (() => {
     const RATE = 16000, FRAME = 640; // кадр 40 мс
     const STEP = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
@@ -1703,8 +1792,8 @@
     input.keys.add(e.code);
     // 1-9, 0 - оружие по порядку на панели (на панели только то, что есть)
     if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)) || 10; const o = ownedList(); if (o[n - 1] !== undefined) selectWeapon(o[n - 1]); }
-    else if (e.code === 'KeyQ') cycleWeapon(-1);
-    else if (e.code === 'KeyE') cycleWeapon(1);
+    else if (e.code === 'KeyQ') { if (S.me.vehicle) { if (!e.repeat) Radio.step(-1); } else cycleWeapon(-1); }
+    else if (e.code === 'KeyE') { if (S.me.vehicle) { if (!e.repeat) Radio.step(1); } else cycleWeapon(1); }
     else if (e.code === 'KeyF') carAction();
     else if (e.code === 'KeyH') horn();
     else if (e.code === 'KeyM') showBig(!S.bigOpen);
@@ -1796,6 +1885,7 @@
   onPress($('btnCar'), () => carAction());
   onPress($('btnLeave'), () => carAction());
   onPress($('btnHorn'), () => horn());
+  onPress($('btnRadio'), () => { Radio.prime(); Radio.step(1); });
   onPress($('btnWeapon'), () => cycleWeapon(1));
 
   // видимый противник в секторе прицела (для подсказки прицела на телефоне)
@@ -1985,7 +2075,7 @@
     if (!S.me.alive) return;
     if (S.me.vehicle) { send({ t: 'exit' }); return; }
     const v = nearCar();
-    if (v) { send({ t: 'enter', id: v.id }); Sound.doorOpen(); }
+    if (v) { Radio.prime(); send({ t: 'enter', id: v.id }); Sound.doorOpen(); }
   }
   function horn() {
     if (!S.me.vehicle) return;
@@ -2057,7 +2147,7 @@
         if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
         else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
         else if (m.kind === 5) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить. Сильный удар - вылетите' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Вас видно и можно подстрелить, от сильного удара вылетите', 3400);
-        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти');
+        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти, Q/E - радио');
         updateHud(true);
         break;
       }
@@ -2522,13 +2612,14 @@
     $('btnWeapon').hidden = !(isTouch && me.alive);
     $('btnCar').hidden = !(me.alive && !me.vehicle && car);
     $('btnHorn').hidden = !(isTouch && me.alive && me.vehicle);
+    $('btnRadio').hidden = !(isTouch && me.alive && me.vehicle);
     btnSprint.hidden = !(isTouch && me.alive && !me.vehicle && (input.move || input.sprintBtn));
     $('btnLeave').hidden = !(me.alive && me.vehicle);
     $('btnMic').classList.toggle('talk', Voice.talking());
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
-      hint.innerHTML = me.vehicle ? (S.car && S.car.kind === 5 ? '<b>F</b> - слезть · <b>H</b> - гудок' : '<b>F</b> - выйти · <b>H</b> - гудок')
+      hint.innerHTML = me.vehicle ? (S.car && S.car.kind === 5 ? '<b>F</b> - слезть' : '<b>F</b> - выйти') + ' · <b>H</b> - гудок · <b>Q/E</b> - радио'
         : car && car.kind === 5 ? '<b>F</b> - сесть на мотоцикл' : '<b>F</b> - сесть в машину';
     } else hint.hidden = true;
     if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? `Возрождение через ${me.respawnIn.toFixed(1)} с` : 'Возрождение...';
@@ -2600,7 +2691,7 @@
     $('btnSound').setAttribute('aria-pressed', Sound.on ? 'true' : 'false');
     $('btnSound').textContent = Sound.on ? 'Звук: включён' : 'Звук: выключен';
   }
-  $('btnSound').addEventListener('click', () => { Sound.init(); Sound.toggle(); syncSoundBtn(); });
+  $('btnSound').addEventListener('click', () => { Sound.init(); Sound.toggle(); syncSoundBtn(); Radio.sync(); });
   syncSoundBtn();
   $('btnInvite').addEventListener('click', async () => {
     showGear(false);
@@ -2935,6 +3026,7 @@
   function leave() {
     S.leaving = true;
     Voice.stop(true);
+    Radio.leave();
     if (S.ws) { try { S.ws.close(); } catch (_) {} }
     S.ws = null;
     S.inGame = false;
@@ -3219,6 +3311,8 @@
     if (!S.me.alive && S.me.respawnIn > 0) S.me.respawnIn = Math.max(0, S.me.respawnIn - dt);
     render(now, dt);
     updateEngines();
+    const inCar = !!(S.me.vehicle && S.me.alive && S.inGame);
+    if (inCar !== Radio.active) { if (inCar) Radio.enter(); else Radio.leave(); }
     updateLoops(now);
     if (now >= S.mmNext) {
       S.mmNext = now + 66;
@@ -3805,7 +3899,7 @@
   }
 
   // для автотестов
-  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar, Sound, Voice };
+  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar, Sound, Voice, Radio, RADIO };
 
   resize();
   requestAnimationFrame(frame);

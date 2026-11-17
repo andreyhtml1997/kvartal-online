@@ -304,7 +304,8 @@ class Room {
           // стоящая техника на дороге и игрок у её двери - для проверки угона и стрельбы из танка
           const r = this.map.roads.x[1] || this.map.roads.x[0];
           for (let i = 0; i < 40; i++) {
-            const x = r[0] + 2, y = 20 + Math.random() * (this.map.h - 40);
+            // мотоцикл - в верхней части дороги: впереди (на юг) хватает места разогнаться
+            const x = r[0] + 2, y = msg.veh === 'moto' ? 14 + Math.random() * 26 : 20 + Math.random() * (this.map.h - 40);
             if (KV.carOverlapsSolid(this.map, x, y, Math.PI / 2, 0.05, null) || !KV.circleFree(this.map, x + CAR.HW + 0.7, y, KV.PLAYER_R)) continue;
             if ([...this.vehicles.list.values()].some(o => !o.dead && Math.hypot(o.x - x, o.y - y) < 7)) continue;
             this.vehicles.setKind(this.vehicles.create(x, y, Math.PI / 2, 6, 'parked', null), msg.veh);

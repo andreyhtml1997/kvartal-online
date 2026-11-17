@@ -47,17 +47,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(seen >= 1, 'второй игрок видит мотоцикл с водителем');
     await obs.screenshot({ path: OUT + '/moto_obs.png' });
 
-    // газ до упора: быстрее машины (21 м/с); держим, пока не врежемся - на полном ходу водитель вылетает
-    await pc.keyboard.down('KeyW');
-    let vmax = 0, thrown = false, t0 = Date.now(), shot = false;
-    while (Date.now() - t0 < 9000) {
-      await sleep(100);
-      const s = await kv(() => { const S = window.__kv.S; return { v: S.car ? S.car.v : -1, veh: S.me.vehicle, roll: S.me.rollUntil > performance.now() }; });
-      if (s.v > vmax) vmax = s.v;
-      if (!shot && s.v > 15) { shot = true; await pc.screenshot({ path: OUT + '/moto_ride.png' }); }
-      if (!s.veh) { thrown = s.roll; break; }
+    // газ до упора: быстрее машины (21 м/с); держим, пока не врежемся - на полном ходу водитель вылетает.
+    // Встречная машина может сбить раньше, чем мотоцикл разгонится, - тогда новый мотоцикл (до трёх попыток)
+    let vmax = 0, thrown = false, shot = false;
+    for (let attempt = 0; attempt < 3 && !(vmax > 22 && thrown); attempt++) {
+      if (attempt) {
+        await sleep(1300);
+        await kv(() => window.__kv.send({ t: 'dbg', veh: 'moto', god: 1, immortal: 1 }));
+        await sleep(800);
+        await pc.keyboard.press('KeyF');
+        await pc.waitForFunction(() => window.__kv.S.car && window.__kv.S.car.kind === 5, null, { timeout: 5000 }).catch(() => {});
+      }
+      await pc.keyboard.down('KeyW');
+      const t0 = Date.now();
+      while (Date.now() - t0 < 9000) {
+        await sleep(100);
+        const s = await kv(() => { const S = window.__kv.S; return { v: S.car ? S.car.v : -1, veh: S.me.vehicle, roll: S.me.rollUntil > performance.now() }; });
+        if (s.v > vmax) vmax = s.v;
+        if (!shot && s.v > 15) { shot = true; await pc.screenshot({ path: OUT + '/moto_ride.png' }); }
+        if (!s.veh) { thrown = thrown || s.roll; break; }
+      }
+      await pc.keyboard.up('KeyW');
+      console.log(`  попытка ${attempt + 1}: разгон до ${vmax.toFixed(1)} м/с, ${thrown ? 'вылетел' : 'не вылетел'}`);
     }
-    await pc.keyboard.up('KeyW');
     const toast = await kv(() => document.getElementById('toast') ? document.getElementById('toast').textContent : '');
     console.log(`разгон: до ${vmax.toFixed(1)} м/с; ${thrown ? 'врезался и вылетел' : 'не вылетел'}; надпись: «${toast}»`);
     check(vmax > 22, 'мотоцикл быстрее машины (больше 22 м/с)');

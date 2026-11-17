@@ -97,15 +97,20 @@ run(4);
 room.spawn(me); me.prot = 1e9;
 
 // 6. скорая: к убитому мирному приезжает врач и поднимает его
-// после возрождения в новом месте прохожие подходят не сразу (появляются за краем экрана)
+// после возрождения в новом месте прохожие подходят не сразу (появляются за краем экрана).
+// Тела и скорые от прошлых проверок убираем: скорых одновременно не больше двух, и занятые чужими телами
+// не успевали к нашему за 120 с (замер 17.11.2026: 1 прогон из 7, обе скорые «parked/park» у других тел)
+for (const v of [...room.vehicles.list.values()]) if (v.kind === 'amb') { for (const id of v.crew || []) { const n = N.list.get(id); if (n) N.remove(n); } room.vehicles.remove(v); }
+for (const n of [...N.list.values()]) if (!n.alive || n.kind === K.MEDIC) N.remove(n);
 let body = null;
 for (let i = 0; i < 25 && !body; i++) { run(1); body = near(40).find(n => n.kind === K.CIV && n.ambient); }
 assert.ok(body, 'есть прохожий для проверки скорой');
 N.damage(body, 500, 0, -1, body.x, body.y);
-let amb = false, revived = false;
-run(120, () => { if (!amb) amb = [...room.vehicles.list.values()].some(v => v.kind === 'amb'); if (body.alive) revived = true; });
+let amb = false, revived = false, giveUps = 0, lastAmb = 0;
+run(120, () => { if (!amb) amb = [...room.vehicles.list.values()].some(v => v.kind === 'amb'); if (body.alive) revived = true; if (body.amb === -1 && lastAmb > 0) giveUps++; lastAmb = body.amb; });
 if (!revived) console.log('скорая не успела:', [...room.vehicles.list.values()].filter(v => v.kind === 'amb').map(v => v.state + '/' + v.role + ' ' + Math.hypot(v.x - body.x, v.y - body.y).toFixed(1)).join('; '),
-  '| врачи:', [...N.list.values()].filter(n => n.kind === K.MEDIC).map(n => (n.alive ? n.state : 'dead') + '/' + (n.phase || '') + ' ' + Math.hypot(n.x - body.x, n.y - body.y).toFixed(1)).join('; '), '| тело amb', body.amb);
+  '| врачи:', [...N.list.values()].filter(n => n.kind === K.MEDIC).map(n => (n.alive ? n.state : 'dead') + '/' + (n.phase || '') + ' ' + Math.hypot(n.x - body.x, n.y - body.y).toFixed(1)).join('; '), '| тело amb', body.amb,
+  '| дорога рядом', !!(N.roadNear(body.x, body.y, 10, 3.6) || N.roadNear(body.x, body.y, 10, 0)), '| тело на', body.x.toFixed(1), body.y.toFixed(1), 'земля', room.map.ground[Math.floor(body.y) * room.map.w + Math.floor(body.x)], '| сдался врач', giveUps);
 console.log(`скорая: выехала ${amb}, человек встал ${revived}`);
 assert.ok(amb, 'к убитому выезжает скорая');
 assert.ok(revived, 'врач поднимает убитого');
