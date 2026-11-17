@@ -1,20 +1,21 @@
 'use strict';
 /*
  * Комната = отдельная карта и партия «все против всех» с возрождением.
- * Сервер главный во всём, кроме шагов игрока: позицию присылает клиент, сервер её проверяет
- * (скорость, стены) и при обмане возвращает игрока назад. Пули, взрывы, урон, разрушение
- * клеток, оружие на карте и боты считаются только на сервере.
+ * Сервер главный во всём, кроме шагов игрока и руля его машины: их присылает браузер,
+ * а сервер проверяет скорость и стены и при обмане возвращает назад. Пули, взрывы, урон,
+ * разрушение клеток, оружие и ящики на карте, машины с водителями и боты считаются только на сервере.
  */
 const KV = require('../public/shared.js');
 const { generateMap } = require('./mapgen');
 const geom = require('./geom');
 const { Bots } = require('./bots');
-const { G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK } = KV;
+const { Vehicles } = require('./vehicles');
+const { G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, STAMINA } = KV;
 
 const DT = 1 / KV.TICK_RATE;
 const MAX_HUMANS = 16;
 const MIN_PLAYERS = 4;          // боты добирают до этого числа
-const MAX_PICKUPS = 18;
+const MAX_PICKUPS = 24;
 const PICKUP_LIFE = 120;        // с
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
   '#fabed4', '#469990', '#dcbeff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#ffd8b1', '#a9a9a9', '#ffe119'];
@@ -24,10 +25,14 @@ const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;
 
 function emptyEvents() {
-  // b - пули, be - конец пули, x - взрывы, tl - клетки, rf - обрушение крыш, od - взорванные машины,
-  // k - убийства, hu - попадания, pa/pr/pu - оружие на карте (появилось/исчезло/подобрано),
-  // pj/pl - вход/выход игроков, sp - возрождения, m - удары кулаком
-  return { b: [], be: [], x: [], tl: [], rf: [], od: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [] };
+  // b - пули, be - конец пули, x - взрывы, tl - клетки, rf - обрушение крыш, k - убийства, hu - попадания,
+  // pa/pr/pu - вещи на карте (появилась/исчезла/подобрана), pj/pl - вход/выход игроков, sp - возрождения,
+  // m - удары кулаком; машины: en/ex - сел/вышел, hn - гудок, ck - сбила человека, cr - удар, vf - загорелась,
+  // vx - взорвалась, fl - водитель убегает
+  return {
+    b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
+    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: []
+  };
 }
 
 class Room {
@@ -47,10 +52,13 @@ class Room {
     this.tickNo = 0;
     this.nextWeaponAt = 3;
     this.nextSupplyAt = 15;
+    this.nextCrateAt = 10;
+    this.crates = this.map.crates;
     this.ev = emptyEvents();
     this.emptySince = Date.now();
     this.sbDirty = true;
     this.bots = new Bots(this);
+    this.vehicles = new Vehicles(this);
     this.fillBots();
   }
 
@@ -68,7 +76,7 @@ class Room {
       x: 0, y: 0, a: 0, hp: 0, ar: 0, alive: false, respawnAt: 0,
       ammo: [0, -1, -1, -1, -1, -1], cur: 0, fire: false, fireLatch: false, nextShot: 0,
       kills: 0, deaths: 0, prot: 0, tp: 0, budget: 0, lastMoveTime: 0, shotAt: -10,
-      view: [24, 16], ai: null
+      view: [24, 16], ai: null, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprint: false, hornAt: -10
     };
     this.players.set(p.id, p);
     return p;
@@ -89,13 +97,18 @@ class Room {
     return p;
   }
 
-  removePlayer(id) {
+  removePlayer(id, fromFill) {
     const p = this.players.get(id);
     if (!p) return;
+    if (p.vehicle) {
+      const v = this.vehicles.list.get(p.vehicle);
+      if (v) { v.state = 'parked'; v.driver = 0; v.tp++; }
+      p.vehicle = 0;
+    }
     this.players.delete(id);
     this.ev.pl.push(id);
     if (!p.isBot && this.humanCount() === 0) this.emptySince = Date.now();
-    this.fillBots();
+    if (!fromFill) this.fillBots();
     this.sbDirty = true;
   }
 
@@ -115,8 +128,7 @@ class Room {
     }
     while (n > want) {
       const b = bots.sort((a, c) => (a.alive - c.alive) || (a.kills - c.kills)).shift();
-      this.players.delete(b.id);
-      this.ev.pl.push(b.id);
+      this.removePlayer(b.id, true);
       n--;
     }
   }
@@ -128,27 +140,27 @@ class Room {
     for (let i = 0; i < 28; i++) {
       const k = tiles[Math.floor(Math.random() * tiles.length)];
       const x = (k % m.w) + 0.5, y = Math.floor(k / m.w) + 0.5;
-      if (!KV.circleFree(m, x, y, KV.PLAYER_R)) continue;
+      if (!KV.circleFree(m, x, y, KV.PLAYER_R) || this.vehicles && this.vehicles.personBlocked(x, y, null)) continue;
       let dmin = 60;
       for (const o of this.players.values()) if (o !== p && o.alive) dmin = Math.min(dmin, Math.hypot(o.x - x, o.y - y));
       if (dmin > bestScore) { bestScore = dmin; best = k; }
     }
     p.x = (best % m.w) + 0.5;
     p.y = Math.floor(best / m.w) + 0.5;
-    p.hp = KV.MAX_HP; p.ar = 0; p.alive = true;
+    p.hp = KV.MAX_HP; p.ar = 0; p.alive = true; p.vehicle = 0;
     p.ammo = [0, -1, -1, -1, -1, -1]; p.cur = W.FISTS;
-    p.fire = false; p.fireLatch = false;
+    p.fire = false; p.fireLatch = false; p.sprint = false; p.stamina = STAMINA.MAX;
     p.prot = this.time + KV.SPAWN_PROTECT;
     p.budget = 0; p.lastMoveTime = this.time;
     p.tp++;
-    if (p.ai) { p.ai.path = null; p.ai.target = null; }
+    if (p.ai) { p.ai.path = null; p.ai.target = null; p.ai.carGoal = 0; }
     this.ev.sp.push([p.id, r2(p.x), r2(p.y)]);
-    this.send(p, { t: 'tp', x: p.x, y: p.y, tp: p.tp, sp: 1 });
+    this.send(p, { t: 'tp', x: p.x, y: p.y, tp: p.tp, sp: 1, veh: 0 });
   }
 
   teleport(p, x, y) {
     p.x = x; p.y = y; p.tp++; p.budget = 0; p.lastMoveTime = this.time;
-    this.send(p, { t: 'tp', x: r2(x), y: r2(y), tp: p.tp });
+    this.send(p, { t: 'tp', x: r2(x), y: r2(y), tp: p.tp, veh: p.vehicle || 0 });
   }
 
   send(p, msg) {
@@ -165,7 +177,6 @@ class Room {
       map: {
         w: m.w, h: m.h, g: KV.rleEncode(m.ground), b: KV.rleEncode(m.block), d,
         bld: m.buildings.map(b => [b.x, b.y, b.w, b.h, b.roof ? 1 : 0]),
-        obj: m.objects.map(o => [o.x, o.y, o.w, o.h, o.color, o.v, o.f, o.dead ? 1 : 0]),
         roads: m.roads
       },
       players: [...this.players.values()].map(o => this.publicInfo(o)),
@@ -175,18 +186,45 @@ class Room {
 
   // ---------- сообщения клиента ----------
   onMessage(p, msg) {
-    if (msg.t === 'i') this.onInput(p, msg);
-    else if (msg.t === 'w') {
-      const i = msg.i | 0;
-      if (i >= 0 && i < WEAPONS.length && (i === W.FISTS || p.ammo[i] > 0)) p.cur = i;
-    } else if (msg.t === 'dbg' && process.env.KV_DEBUG === '1') {
-      // только для автотестов на своём компьютере: на хостинге переменная KV_DEBUG не задана
-      if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
-      if (msg.god) p.prot = this.time + 600;
-      if (Array.isArray(msg.tp)) {
-        const x = Number(msg.tp[0]), y = Number(msg.tp[1]);
-        if (Number.isFinite(x) && Number.isFinite(y) && KV.circleFree(this.map, x, y, KV.PLAYER_R)) this.teleport(p, x, y);
+    switch (msg.t) {
+      case 'i': this.onInput(p, msg); break;
+      case 'w': {
+        const i = msg.i | 0;
+        if (i >= 0 && i < WEAPONS.length && (i === W.FISTS || p.ammo[i] > 0)) p.cur = i;
+        break;
       }
+      case 'enter': if (p.alive && !p.vehicle) this.vehicles.enter(p, msg.id | 0); break;
+      case 'exit': if (p.vehicle) this.vehicles.exit(p, false); break;
+      case 'horn':
+        if (p.vehicle && this.time - p.hornAt > 0.5) { p.hornAt = this.time; this.ev.hn.push(p.vehicle); }
+        break;
+      case 'ram': if (p.vehicle) this.vehicles.onRam(p, msg); break;
+      case 'crash': if (p.vehicle) this.vehicles.onCrash(p, msg); break;
+      case 'dbg':
+        // только для автотестов на своём компьютере: на хостинге переменная KV_DEBUG не задана
+        if (process.env.KV_DEBUG !== '1') break;
+        if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
+        if (msg.god) p.prot = this.time + 600;
+        if (msg.nearCar) {
+          let best = null, bd = 1e9;
+          for (const v of this.vehicles.list.values()) {
+            if (v.dead || v.state !== 'parked') continue;
+            const d = Math.hypot(v.x - p.x, v.y - p.y);
+            if (d < bd) { bd = d; best = v; }
+          }
+          if (best) {
+            const c = Math.cos(best.a), s = Math.sin(best.a);
+            for (const side of [1, -1]) {
+              const x = best.x + s * side * (CAR.HW + 0.7), y = best.y - c * side * (CAR.HW + 0.7);
+              if (KV.circleFree(this.map, x, y, KV.PLAYER_R)) { this.teleport(p, x, y); break; }
+            }
+          }
+        }
+        if (Array.isArray(msg.tp)) {
+          const x = Number(msg.tp[0]), y = Number(msg.tp[1]);
+          if (Number.isFinite(x) && Number.isFinite(y) && KV.circleFree(this.map, x, y, KV.PLAYER_R)) this.teleport(p, x, y);
+        }
+        break;
     }
   }
 
@@ -195,18 +233,22 @@ class Room {
     if (Number.isFinite(a)) p.a = a;
     p.fire = !!m.f;
     if (m.f) p.fireLatch = true;
+    p.sprint = !!m.s && !p.vehicle;
     if (Array.isArray(m.v)) {
       const vw = Number(m.v[0]), vh = Number(m.v[1]);
       if (Number.isFinite(vw) && Number.isFinite(vh)) p.view = [Math.max(8, Math.min(70, vw)), Math.max(8, Math.min(70, vh))];
     }
-    if (!p.alive || m.tp !== p.tp) return;
+    if (!p.alive) return;
+    if (p.vehicle) { this.vehicles.onDrive(p, m.c); return; }
+    if (m.tp !== p.tp) return;
     const x = Number(m.x), y = Number(m.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const dist = Math.hypot(x - p.x, y - p.y);
     if (dist < 1e-4) return;
-    p.budget = Math.min(p.budget + (this.time - p.lastMoveTime) * KV.PLAYER_SPEED * 1.25, KV.PLAYER_SPEED * 1.0);
+    const speed = p.sprint && p.stamina > 0 ? KV.SPRINT_SPEED : KV.PLAYER_SPEED;
+    p.budget = Math.min(p.budget + (this.time - p.lastMoveTime) * speed * 1.3, KV.SPRINT_SPEED * 1.0);
     p.lastMoveTime = this.time;
-    if (dist <= p.budget + 0.06 &&
+    if (dist <= p.budget + 0.08 &&
         KV.circleFree(this.map, x, y, KV.PLAYER_R * 0.85) &&
         KV.segmentClear(this.map, p.x, p.y, x, y, KV.PLAYER_R * 0.7)) {
       p.x = x; p.y = y; p.budget -= dist;
@@ -219,17 +261,33 @@ class Room {
   tick() {
     this.time += DT;
     this.tickNo++;
-    for (const p of this.players.values()) if (p.isBot) this.bots.update(p, DT);
+    for (const p of this.players.values()) if (p.isBot && !p.vehicle) this.bots.update(p, DT);
+    this.vehicles.update(DT);
+    this.updateStamina();
     for (const p of this.players.values()) this.updateFiring(p);
     this.updateBullets();
     this.updatePending();
     this.updatePickups();
+    this.updateCrates();
     for (const p of this.players.values()) if (!p.alive && this.time >= p.respawnAt) this.spawn(p);
     if (this.recentShots.length && this.time - this.recentShots[0].t > 5) this.recentShots = this.recentShots.filter(s => this.time - s.t <= 5);
     this.flushEvents();
     if (this.tickNo % 2 === 0) this.sendSnapshots();
     if (this.tickNo % 15 === 0) this.sendPings();
     if (this.tickNo % 30 === 0 && this.sbDirty) this.sendScoreboard();
+  }
+
+  updateStamina() {
+    for (const p of this.players.values()) {
+      if (!p.alive || p.vehicle) continue;
+      const moving = this.time - p.lastMoveTime < 0.25;
+      if (p.sprint && moving && p.stamina > 0) {
+        p.stamina = Math.max(0, p.stamina - STAMINA.DRAIN * DT);
+        p.staminaT = this.time;
+      } else if (this.time - p.staminaT > STAMINA.DELAY) {
+        p.stamina = Math.min(STAMINA.MAX, p.stamina + STAMINA.REGEN * DT);
+      }
+    }
   }
 
   // ---------- стрельба ----------
@@ -241,8 +299,11 @@ class Room {
   updateFiring(p) {
     if (!p.alive || !(p.fire || p.fireLatch)) return;
     if (this.time < p.nextShot) return;
+    // на рывке не стреляют
+    if (p.sprint && !p.vehicle && this.time - p.lastMoveTime < 0.25 && p.stamina > 0) { p.fireLatch = false; return; }
     if (p.cur !== W.FISTS && !(p.ammo[p.cur] > 0)) { p.cur = this.bestWeapon(p); p.fireLatch = false; return; }
     const w = WEAPONS[p.cur];
+    if (w.melee && p.vehicle) { p.fireLatch = false; return; } // из машины кулаками не бьют
     p.fireLatch = false;
     p.nextShot = this.time + 1 / w.rate;
     p.prot = 0; // стрельба снимает защиту после появления
@@ -251,12 +312,14 @@ class Room {
     if (w.melee) { this.melee(p, w); return; }
     p.ammo[p.cur]--;
     const n = w.pellets || 1;
+    // из машины пуля вылетает из окна, а не из центра машины
+    const ox = p.vehicle ? Math.cos(p.a) * 0.6 : 0, oy = p.vehicle ? Math.sin(p.a) * 0.6 : 0;
     for (let i = 0; i < n; i++) {
       const ang = n > 1
         ? p.a + (i / (n - 1) - 0.5) * w.spread + (Math.random() - 0.5) * 0.05
         : p.a + (Math.random() - 0.5) * 2 * w.spread;
       const b = {
-        id: this.nextBullet++, owner: p.id, w: w.id, x: p.x, y: p.y,
+        id: this.nextBullet++, owner: p.id, veh: p.vehicle || 0, w: w.id, x: p.x + ox, y: p.y + oy,
         dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: w.range, range: w.range, dead: false
       };
       this.bullets.push(b);
@@ -270,7 +333,7 @@ class Room {
     const ax = Math.cos(p.a), ay = Math.sin(p.a);
     let target = null, bestD = w.range + 0.5;
     for (const o of this.players.values()) {
-      if (o === p || !o.alive) continue;
+      if (o === p || !o.alive || o.vehicle) continue;
       const dx = o.x - p.x, dy = o.y - p.y, d = Math.hypot(dx, dy);
       if (d > w.range + 0.5 || d >= bestD) continue;
       if ((dx * ax + dy * ay) / (d || 1) < 0.45) continue; // примерно ±63° перед собой
@@ -287,14 +350,20 @@ class Room {
     for (const b of this.bullets) {
       const step = Math.min(b.speed * DT, b.left);
       const hitT = geom.raycast(m, b.x, b.y, b.dx, b.dy, step);
-      let tBest = hitT ? hitT.t : Infinity, target = null;
+      let tBest = hitT ? hitT.t : Infinity, target = null, car = null;
       for (const p of this.players.values()) {
-        if (!p.alive || p.id === b.owner) continue;
+        if (!p.alive || p.id === b.owner || p.vehicle) continue;
         const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
         if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
       }
+      for (const v of this.vehicles.list.values()) {
+        if (v.dead || v.id === b.veh) continue;
+        if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
+        const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
+        if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; }
+      }
       const w = WEAPONS[b.w];
-      if (target || (hitT && hitT.t <= step)) {
+      if (target || car || (hitT && hitT.t <= step)) {
         const back = w.grenade ? 0.08 : 0;
         const hx = b.x + b.dx * Math.max(0, tBest - back), hy = b.y + b.dy * Math.max(0, tBest - back);
         b.dead = true;
@@ -304,9 +373,14 @@ class Room {
         if (target) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
           this.damage(target, w.dmg * fall, b.owner, w.id, hx, hy);
+        } else if (car) {
+          this.ev.be.push([b.id, r2(hx), r2(hy), 4]);
+          this.vehicles.damage(car, w.dmg * fall * 0.6, b.owner);
+          const drv = car.driver ? this.players.get(car.driver) : null;
+          if (drv && drv.vehicle === car.id) this.damage(drv, w.dmg * fall * 0.35, b.owner, w.id, drv.x, drv.y);
         } else {
           this.ev.be.push([b.id, r2(hx), r2(hy), 1]);
-          if (hitT.k >= 0) this.damageTile(hitT.k, w.dmg * fall, b.owner);
+          if (hitT.k >= 0) this.damageTile(hitT.k, w.dmg * fall, b.owner, BLOCKS[m.block[hitT.k]] ? BLOCKS[m.block[hitT.k]].bullet : 1);
         }
         continue;
       }
@@ -331,8 +405,9 @@ class Room {
   }
 
   kill(t, attackerId, weaponId) {
+    if (t.vehicle) this.vehicles.exit(t, true);
     t.alive = false; t.hp = 0; t.deaths++;
-    t.fire = false; t.fireLatch = false;
+    t.fire = false; t.fireLatch = false; t.sprint = false;
     t.respawnAt = this.time + KV.RESPAWN_DELAY;
     const a = this.players.get(attackerId);
     if (a && a !== t) a.kills++;
@@ -345,12 +420,26 @@ class Room {
     const m = this.map;
     this.ev.x.push([r2(x), r2(y), blast.r]);
     for (const p of this.players.values()) {
-      if (!p.alive) continue;
+      if (!p.alive || p.vehicle) continue;
       const d = Math.hypot(p.x - x, p.y - y);
       if (d >= blast.r + 0.4) continue;
       let dmg = blast.dmg * (1 - Math.max(0, d - 0.4) / blast.r);
       if (!geom.losClear(m, x, y, p.x, p.y, false)) dmg *= 0.4;
       this.damage(p, dmg, ownerId, weaponId, p.x, p.y);
+    }
+    // машины: урон, водителю - половина, пустые отбрасывает
+    for (const v of [...this.vehicles.list.values()]) {
+      if (v.dead) continue;
+      const d = KV.distToOBB(x, y, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      if (d >= blast.r) continue;
+      const k = 1 - d / blast.r;
+      this.vehicles.damage(v, blast.dmg * k * 1.6, ownerId);
+      const drv = v.driver ? this.players.get(v.driver) : null;
+      if (drv && drv.vehicle === v.id) this.damage(drv, blast.dmg * k * 0.45, ownerId, weaponId, drv.x, drv.y);
+      if (v.state === 'parked' || v.state === 'bot') {
+        const nx = v.x - x, ny = v.y - y, l = Math.hypot(nx, ny) || 1;
+        v.sx += (nx / l) * 7 * k; v.sy += (ny / l) * 7 * k;
+      }
     }
     const r = blast.r;
     for (let ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++) {
@@ -361,7 +450,7 @@ class Room {
         const k = ty * m.w + tx;
         const bt = m.block[k];
         if (bt === B.NONE) continue;
-        this.damageTile(k, blast.tile * (1 - d / r) * BLOCKS[bt].blast, ownerId);
+        this.damageTile(k, blast.tile * (1 - d / r), ownerId, BLOCKS[bt].blast);
       }
     }
     // взрыв внутри дома обрушивает крышу
@@ -372,13 +461,16 @@ class Room {
     }
   }
 
-  damageTile(k, amount, ownerId) {
+  // mult - доля урона, которая доходит до клетки (у кирпича от пули - половина и т.п.)
+  damageTile(k, amount, ownerId, mult = 1) {
     const m = this.map;
     const t = m.block[k];
-    if (t === B.NONE || t === B.BORDER || !(amount > 0)) return;
+    if (t === B.NONE || t === B.BORDER) return;
+    const dmg = amount * mult;
+    if (!(dmg > 0)) return;
     const info = BLOCKS[t];
     const before = m.hp[k];
-    m.hp[k] -= amount;
+    m.hp[k] -= dmg;
     if (m.hp[k] <= 0) { this.destroyTile(k, ownerId); return; }
     const st = KV.damageStage(m.hp[k], info.hp);
     if (st !== KV.damageStage(before, info.hp)) {
@@ -391,36 +483,28 @@ class Room {
     const m = this.map;
     const t = m.block[k];
     if (t === B.NONE || t === B.BORDER) return;
-    if (t === B.CAR) { this.destroyCar(m.object[k], ownerId); return; }
     const info = BLOCKS[t];
     m.block[k] = B.NONE; m.hp[k] = 0; m.dmg[k] = 0;
     if (info.rubble !== undefined) m.ground[k] = info.rubble;
     this.ev.tl.push([k, 0, 0, m.ground[k], t]);
     const x = k % m.w, y = Math.floor(k / m.w);
     if (info.explode) this.pending.push({ at: this.time + 0.12, x: x + 0.5, y: y + 0.5, blast: info.explode, owner: ownerId, w: -1 });
+    if (t === B.CRATE) { this.crates--; this.crateLoot(x + 0.5, y + 0.5, ownerId); }
+    // соседние кирпичи трескаются: стена рушится кусками
+    if (info.crumble) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx <= 0 || ny <= 0 || nx >= m.w - 1 || ny >= m.h - 1) continue;
+        const nk = ny * m.w + nx;
+        if (m.block[nk] === t) this.damageTile(nk, info.hp * info.crumble * (0.6 + Math.random() * 0.8), ownerId);
+      }
+    }
     const bid = m.owner[k];
     if (t === B.BRICK && bid >= 0) {
       const b = m.buildings[bid];
       b.destroyed++;
       if (b.roof && b.destroyed >= Math.max(3, Math.ceil(b.walls * 0.18))) this.collapseRoof(b);
     }
-  }
-
-  destroyCar(objId, ownerId) {
-    const m = this.map;
-    const o = m.objects[objId];
-    if (!o || o.dead) return;
-    o.dead = true;
-    for (let j = o.y; j < o.y + o.h; j++) {
-      for (let i = o.x; i < o.x + o.w; i++) {
-        const k = j * m.w + i;
-        if (m.block[k] !== B.CAR) continue;
-        m.block[k] = B.NONE; m.hp[k] = 0; m.dmg[k] = 0; m.ground[k] = G.BURNT;
-        this.ev.tl.push([k, 0, 0, G.BURNT, B.CAR]);
-      }
-    }
-    this.ev.od.push(objId);
-    this.pending.push({ at: this.time + 0.15, x: o.x + o.w / 2, y: o.y + o.h / 2, blast: BLOCKS[B.CAR].explode, owner: ownerId, w: -1 });
   }
 
   collapseRoof(b) {
@@ -435,6 +519,60 @@ class Room {
     if (!due.length) return;
     this.pending = this.pending.filter(e => e.at > this.time);
     for (const e of due) this.explode(e.x, e.y, e.blast, e.owner, e.w);
+  }
+
+  // ---------- ящики: внутри что-то лежит, со временем появляются новые ----------
+  randomWeapon() {
+    let total = 0;
+    for (const [, wgt] of WEAPON_WEIGHTS) total += wgt;
+    let r = Math.random() * total;
+    for (const [w, wgt] of WEAPON_WEIGHTS) { r -= wgt; if (r <= 0) return w; }
+    return W.PISTOL;
+  }
+
+  crateLoot(x, y, ownerId) {
+    if (Math.random() > 0.75) return;
+    const p = this.players.get(ownerId);
+    const r = Math.random();
+    if (r < 0.32) { const w = this.randomWeapon(); this.addPickup(PK.WEAPON, w, x, y, WEAPONS[w].pick); return; }
+    if (r < 0.56) {
+      // патроны - к тому оружию, которое у разбившего уже есть
+      const owned = p ? [1, 2, 3, 4, 5].filter(w => p.ammo[w] >= 0) : [];
+      if (owned.length) { const w = owned[Math.floor(Math.random() * owned.length)]; this.addPickup(PK.AMMO, w, x, y, WEAPONS[w].box); }
+      else { const w = this.randomWeapon(); this.addPickup(PK.WEAPON, w, x, y, WEAPONS[w].pick); }
+      return;
+    }
+    this.addPickup(r < 0.8 ? PK.HEALTH : PK.ARMOR, 0, x, y, r < 0.8 ? 40 : 50);
+  }
+
+  updateCrates() {
+    if (this.time < this.nextCrateAt) return;
+    this.nextCrateAt = this.time + 7 + Math.random() * 5;
+    if (this.crates >= this.map.crates) return;
+    const m = this.map;
+    const tiles = m.pickupTiles;
+    for (let tries = 0; tries < 40; tries++) {
+      const k = tiles[Math.floor(Math.random() * tiles.length)];
+      if (m.block[k] !== B.NONE || m.keep[k] || m.ground[k] === G.ROAD) continue;
+      const x = k % m.w, y = Math.floor(k / m.w);
+      let open = true;
+      for (let j = -1; j <= 1 && open; j++) {
+        for (let i = -1; i <= 1; i++) {
+          const nk = (y + j) * m.w + x + i;
+          if (m.block[nk] !== B.NONE || m.ground[nk] === G.WATER) { open = false; break; }
+        }
+      }
+      if (!open) continue;
+      let ok = true;
+      for (const p of this.players.values()) if (p.alive && Math.hypot(p.x - x - 0.5, p.y - y - 0.5) < 12) { ok = false; break; }
+      if (ok) for (const pk of this.pickups.values()) if (Math.hypot(pk.x - x - 0.5, pk.y - y - 0.5) < 1.5) { ok = false; break; }
+      if (ok && this.vehicles.personBlocked(x + 0.5, y + 0.5, null)) ok = false;
+      if (!ok) continue;
+      m.block[k] = B.CRATE; m.hp[k] = BLOCKS[B.CRATE].hp; m.dmg[k] = 0;
+      this.crates++;
+      this.ev.tl.push([k, B.CRATE, 0, m.ground[k]]);
+      return;
+    }
   }
 
   // ---------- оружие на карте ----------
@@ -469,10 +607,7 @@ class Room {
   }
 
   spawnWeaponDrop() {
-    let total = 0;
-    for (const [, wgt] of WEAPON_WEIGHTS) total += wgt;
-    let r = Math.random() * total, wid = W.PISTOL;
-    for (const [w, wgt] of WEAPON_WEIGHTS) { r -= wgt; if (r <= 0) { wid = w; break; } }
+    const wid = this.randomWeapon();
     const spot = this.randomPickupSpot(5);
     if (!spot) return;
     const [x, y] = spot;
@@ -504,8 +639,9 @@ class Room {
       if (this.time - pk.born > PICKUP_LIFE) { this.removePickup(pk.id); continue; }
       for (const p of this.players.values()) {
         if (!p.alive) continue;
+        const r = p.vehicle ? 1.7 : 0.85;
         const dx = p.x - pk.x, dy = p.y - pk.y;
-        if (dx * dx + dy * dy > 0.85 * 0.85) continue;
+        if (dx * dx + dy * dy > r * r) continue;
         if (this.tryPick(p, pk)) { this.removePickup(pk.id); break; }
       }
     }
@@ -547,16 +683,24 @@ class Room {
   sendSnapshots() {
     const ts = Date.now();
     const all = [...this.players.values()];
+    const cars = [...this.vehicles.list.values()];
     for (const p of all) {
       if (p.isBot) continue;
+      const vw = p.view[0] + 6, vh = p.view[1] + 6;
       const list = [];
       for (const o of all) {
-        if (o !== p && (Math.abs(o.x - p.x) > p.view[0] + 6 || Math.abs(o.y - p.y) > p.view[1] + 6)) continue;
-        const flags = (o.alive ? 1 : 0) | (this.time < o.prot ? 2 : 0) | (this.time - o.shotAt < 0.15 ? 4 : 0);
+        if (o !== p && (Math.abs(o.x - p.x) > vw || Math.abs(o.y - p.y) > vh)) continue;
+        const flags = (o.alive ? 1 : 0) | (this.time < o.prot ? 2 : 0) | (this.time - o.shotAt < 0.15 ? 4 : 0) | (o.vehicle ? 8 : 0);
         list.push([o.id, r2(o.x), r2(o.y), r3(o.a), flags, o.cur, Math.max(0, Math.ceil(o.hp))]);
       }
-      const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)), p.alive ? 1 : 0];
-      this.send(p, { t: 's', ts, p: list, me });
+      const c = [];
+      for (const v of cars) {
+        if (v.dead || Math.abs(v.x - p.x) > vw + 10 || Math.abs(v.y - p.y) > vh + 10) continue;
+        c.push(this.vehicles.snap(v));
+      }
+      const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)),
+        p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0];
+      this.send(p, { t: 's', ts, p: list, c, me });
     }
   }
 

@@ -83,10 +83,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(rows === 4, `в таблице 4 игрока (${rows})`);
     await pc.keyboard.up('Tab');
 
-    // ---- ждём оружие на карте и миникарту ----
+    // ---- радар слева вверху, машины рядом ----
+    const radar = await pc.evaluate(() => { const r = document.getElementById('minimap').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width }; });
+    check(radar.x < 20 && radar.y < 20 && radar.w >= 140, `радар слева вверху, ${Math.round(radar.w)} px`);
+    const cars = await pc.evaluate(() => window.__kv.S.vehicles.size);
+    log('машин рядом у компьютера:', cars);
+
+    // ---- ждём оружие на карте ----
     await sleep(5000);
-    const pk = await pc.evaluate(() => window.__kv.S.pickups.size);
-    check(pk >= 1, `на карте появилось оружие (${pk})`);
+    const pk = await pc.evaluate(() => window.__kv.S.paCount || 0);
+    check(pk >= 1, `на карте появляется оружие (${pk})`);
 
     // ---- производительность ----
     const f0 = await pc.evaluate(() => window.__kv.S.frame);
@@ -98,6 +104,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await ph.screenshot({ path: OUT + '/phone.png' });
 
     // ---- выход и меню ----
+    await pc.click('#btnMenu');
+    check(await pc.isVisible('#gearMenu'), 'шестерёнка открывает настройки');
     await pc.click('#btnExit');
     await sleep(300);
     check(await pc.isVisible('#menu'), 'кнопка «Выход» возвращает в меню');

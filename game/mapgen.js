@@ -32,17 +32,17 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   const ground = new Uint8Array(N).fill(G.GRASS);
   const block = new Uint8Array(N);
   const owner = new Int16Array(N).fill(-1);   // индекс дома, которому принадлежит клетка
-  const object = new Int16Array(N).fill(-1);  // индекс машины
   const keep = new Uint8Array(N);             // проходы, которые нельзя загораживать
+  const carMask = new Uint8Array(N);          // место под припаркованной машиной (машины - отдельные объекты, не клетки)
   const buildings = [];
-  const objects = [];
+  const carSpawns = [];
 
   const I = (x, y) => y * W + x;
   const inside = (x, y) => x > 0 && y > 0 && x < W - 1 && y < H - 1;
   const fillG = (x, y, w, h, t) => {
     for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (inside(i, j)) ground[I(i, j)] = t;
   };
-  const free = (x, y) => inside(x, y) && block[I(x, y)] === B.NONE && ground[I(x, y)] !== G.WATER && !keep[I(x, y)];
+  const free = (x, y) => inside(x, y) && block[I(x, y)] === B.NONE && ground[I(x, y)] !== G.WATER && !keep[I(x, y)] && !carMask[I(x, y)];
   const rectFree = (x, y, w, h) => {
     for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (!free(i, j)) return false;
     return true;
@@ -82,12 +82,13 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   for (const [x, w] of ax.roads) { fillG(x, 1, w, H - 2, G.ROAD); for (let i = x; i < x + w; i++) vRoad[i] = 1; }
   for (const [y, h] of ay.roads) { fillG(1, y, W - 2, h, G.ROAD); for (let j = y; j < y + h; j++) hRoad[j] = 1; }
 
-  // ---------- машины ----------
+  // ---------- машины на парковках (отдельные объекты, их можно угнать) ----------
   function placeCar(x, y, w, h, vertical, flip) {
     if (!rectFree(x, y, w, h)) return false;
-    const id = objects.length;
-    objects.push({ id, x, y, w, h, color: ri(0, 7), v: vertical ? 1 : 0, f: flip ? 1 : 0, dead: false });
-    for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) { block[I(i, j)] = B.CAR; object[I(i, j)] = id; }
+    // носом вверх/вниз (вертикально) или вправо/влево
+    const a = vertical ? (flip ? Math.PI / 2 : -Math.PI / 2) : (flip ? Math.PI : 0);
+    carSpawns.push({ x: x + w / 2, y: y + h / 2, a, color: ri(0, 7) });
+    for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) carMask[I(i, j)] = 1;
     return true;
   }
 
@@ -283,7 +284,9 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     }
     for (let k = 0; k < 5; k++) {
       const tx = ri(x + 1, x + w - 2), ty = ri(y + 1, y + h - 2);
-      if (free(tx, ty) && !near(tx, ty, 1, B.CAR)) block[I(tx, ty)] = chance(0.55) ? B.BARREL : B.CONCRETE;
+      let byCar = false;
+      for (let j = ty - 1; j <= ty + 1; j++) for (let i = tx - 1; i <= tx + 1; i++) if (inside(i, j) && carMask[I(i, j)]) byCar = true;
+      if (free(tx, ty) && !byCar) block[I(tx, ty)] = chance(0.55) ? B.BARREL : B.CONCRETE;
     }
   }
 
@@ -350,30 +353,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     }
   }
 
-  // ---------- улицы: машины у обочин, деревья и бочки на тротуарах ----------
-  const plainRoad = (x, y, w, h) => {
-    for (let j = y; j < y + h; j++) {
-      for (let i = x; i < x + w; i++) {
-        if (!inside(i, j) || ground[I(i, j)] !== G.ROAD || block[I(i, j)] !== B.NONE) return false;
-        if (vRoad[i] && hRoad[j]) return false; // перекрёсток
-      }
-    }
-    return true;
-  };
-  for (const [rx, rw] of ax.roads) {
-    for (let yy = 3; yy < H - 7; yy += ri(5, 9)) {
-      if (!chance(0.25)) continue;
-      const lane = chance(0.5) ? rx : rx + rw - 2;
-      if (plainRoad(lane, yy - 2, 2, 8)) placeCar(lane, yy, 2, 4, true, chance(0.5));
-    }
-  }
-  for (const [ry, rh] of ay.roads) {
-    for (let xx = 3; xx < W - 7; xx += ri(5, 9)) {
-      if (!chance(0.25)) continue;
-      const lane = chance(0.5) ? ry : ry + rh - 2;
-      if (plainRoad(xx - 2, lane, 8, 2)) placeCar(xx, lane, 4, 2, false, chance(0.5));
-    }
-  }
+  // ---------- улицы: дороги свободны для машин с водителями; деревья и бочки на тротуарах ----------
   for (let y = 1; y < H - 1; y++) {
     for (let x = 1; x < W - 1; x++) {
       if (ground[I(x, y)] !== G.WALK || !free(x, y)) continue;
@@ -414,7 +394,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
         const bx = x + dx, by = y + dy;
         if (!inside(bx, by)) continue;
         const bk = I(bx, by), t = block[bk];
-        if (t === B.NONE || t === B.BORDER || t === B.CAR) continue;
+        if (t === B.NONE || t === B.BORDER) continue;
         const touchesReach = DIRS4.some(([ex, ey]) => { const nx = bx + ex, ny = by + ey; return inside(nx, ny) && reach[I(nx, ny)]; });
         if (touchesReach) { block[bk] = B.NONE; opened = true; break; }
       }
@@ -431,16 +411,19 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     for (let j = b.y; j < b.y + b.h; j++) for (let i = b.x; i < b.x + b.w; i++) if (block[I(i, j)] === B.BRICK) walls++;
     b.walls = walls;
   }
+  // появляться не на дороге (там ездят машины) и не под припаркованной машиной
   const spawnTiles = [], pickupTiles = [];
   for (let k = 0; k < N; k++) {
-    if (!reach[k] || !walkable(k)) continue;
+    if (!reach[k] || !walkable(k) || carMask[k]) continue;
     pickupTiles.push(k);
-    if (owner[k] === -1) spawnTiles.push(k);
+    if (owner[k] === -1 && ground[k] !== G.ROAD) spawnTiles.push(k);
   }
+  let crates = 0;
+  for (let k = 0; k < N; k++) if (block[k] === B.CRATE) crates++;
 
   return {
-    seed, w: W, h: H, ground, block, hp, dmg: new Uint8Array(N), owner, object,
-    buildings, objects, roads: { x: ax.roads, y: ay.roads }, reach,
+    seed, w: W, h: H, ground, block, hp, dmg: new Uint8Array(N), owner, keep,
+    buildings, carSpawns, crates, roads: { x: ax.roads, y: ay.roads }, reach,
     spawnTiles: Int32Array.from(spawnTiles), pickupTiles: Int32Array.from(pickupTiles)
   };
 }

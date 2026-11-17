@@ -1,4 +1,4 @@
-/* «Квартал»: общие константы и физика движения - один файл для сервера (Node) и браузера. */
+/* «Квартал»: общие константы и физика (люди и машины) - один файл для сервера (Node) и браузера. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -9,8 +9,10 @@
   const MAP_W = 128;            // метров (1 клетка = 1 м)
   const MAP_H = 128;
   const PLAYER_R = 0.42;        // радиус игрока, м
-  const PLAYER_SPEED = 6;       // м/с
-  const VIEW_RADIUS = 15;       // сколько метров видно вокруг игрока по короткой стороне экрана
+  const PLAYER_SPEED = 8;       // м/с, обычный бег
+  const SPRINT_SPEED = 11.5;    // м/с, рывок
+  const STAMINA = { MAX: 100, DRAIN: 28, REGEN: 20, DELAY: 0.7, START: 15 }; // в секунду; DELAY - пауза перед восстановлением
+  const VIEW_RADIUS = 11;       // сколько метров видно вокруг игрока по короткой стороне экрана
   const TICK_RATE = 30;         // тиков сервера в секунду
   const RESPAWN_DELAY = 3;      // с
   const SPAWN_PROTECT = 1.5;    // с неуязвимости после появления
@@ -19,29 +21,30 @@
 
   // Земля (по ней ходят)
   const G = { GRASS: 0, ROAD: 1, WALK: 2, FLOOR: 3, RUBBLE: 4, DIRT: 5, WATER: 6, LOT: 7, BURNT: 8 };
-  // Препятствия (клетки 1x1 м, у каждой своя прочность)
+  // Препятствия (клетки 1x1 м, у каждой своя прочность). CAR оставлен для совместимости: машины теперь отдельные объекты.
   const B = { NONE: 0, BORDER: 1, BRICK: 2, CONCRETE: 3, GLASS: 4, FENCE: 5, CRATE: 6, TREE: 7, BARREL: 8, CAR: 9, BENCH: 10 };
 
   // hp - прочность; bullet / blast - какая доля урона от пули / взрыва доходит до клетки;
   // rubble - во что превращается земля после разрушения; explode - взрыв при разрушении;
   // low - низкое препятствие: сквозь него видно (боты замечают противника)
   const BLOCKS = [];
+  // crumble - разрушенная клетка трескает соседние такого же типа (дыры в стенах расширяются)
   BLOCKS[B.BORDER] = { name: 'граница', hp: Infinity, bullet: 0, blast: 0 };
-  BLOCKS[B.BRICK] = { name: 'кирпич', hp: 300, bullet: 0.5, blast: 1, rubble: G.RUBBLE };
-  BLOCKS[B.CONCRETE] = { name: 'бетон', hp: 650, bullet: 0.25, blast: 0.7, rubble: G.RUBBLE };
-  BLOCKS[B.GLASS] = { name: 'стекло', hp: 8, bullet: 1, blast: 1, low: true };
-  BLOCKS[B.FENCE] = { name: 'забор', hp: 45, bullet: 1, blast: 1, low: true };
-  BLOCKS[B.CRATE] = { name: 'ящик', hp: 70, bullet: 1, blast: 1 };
-  BLOCKS[B.TREE] = { name: 'дерево', hp: 130, bullet: 0.8, blast: 1 };
+  BLOCKS[B.BRICK] = { name: 'кирпич', hp: 110, bullet: 0.65, blast: 1, rubble: G.RUBBLE, crumble: 0.3 };
+  BLOCKS[B.CONCRETE] = { name: 'бетон', hp: 240, bullet: 0.35, blast: 0.8, rubble: G.RUBBLE, crumble: 0.2 };
+  BLOCKS[B.GLASS] = { name: 'стекло', hp: 6, bullet: 1, blast: 1, low: true };
+  BLOCKS[B.FENCE] = { name: 'забор', hp: 28, bullet: 1, blast: 1, low: true };
+  BLOCKS[B.CRATE] = { name: 'ящик', hp: 40, bullet: 1, blast: 1 };
+  BLOCKS[B.TREE] = { name: 'дерево', hp: 90, bullet: 0.8, blast: 1 };
   BLOCKS[B.BARREL] = { name: 'бочка', hp: 25, bullet: 1, blast: 1, low: true, explode: { r: 3.2, dmg: 75, tile: 260 } };
   BLOCKS[B.CAR] = { name: 'машина', hp: 110, bullet: 0.7, blast: 0.8, explode: { r: 4, dmg: 95, tile: 320 }, rubble: G.BURNT };
-  BLOCKS[B.BENCH] = { name: 'скамейка', hp: 35, bullet: 1, blast: 1, low: true };
+  BLOCKS[B.BENCH] = { name: 'скамейка', hp: 24, bullet: 1, blast: 1, low: true };
 
   const W = { FISTS: 0, PISTOL: 1, RIFLE: 2, SHOTGUN: 3, SNIPER: 4, LAUNCHER: 5 };
   // rate - выстрелов в секунду; speed - м/с; spread - разброс, рад; range - дальность, м;
   // pick - патронов в подобранном оружии; box - в коробке патронов; max - сколько можно носить
   const WEAPONS = [
-    { id: 0, name: 'Кулаки', melee: true, dmg: 20, rate: 2.5, range: 1.3, tileDmg: 9 },
+    { id: 0, name: 'Кулаки', melee: true, dmg: 20, rate: 2.5, range: 1.3, tileDmg: 16 },
     { id: 1, name: 'Пистолет', dmg: 22, rate: 4, speed: 50, spread: 0.035, pellets: 1, range: 32, pick: 24, box: 36, max: 120 },
     { id: 2, name: 'Автомат', dmg: 14, rate: 10, speed: 60, spread: 0.07, pellets: 1, range: 36, pick: 60, box: 90, max: 270 },
     { id: 3, name: 'Дробовик', dmg: 11, rate: 1.1, speed: 44, spread: 0.3, pellets: 8, range: 14, pick: 10, box: 16, max: 48 },
@@ -51,6 +54,16 @@
   // Что и как часто появляется на карте
   const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12]];
   const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3 };
+
+  // ---------- машины ----------
+  // HL/HW - половина длины/ширины, MAX - м/с вперёд, REV - назад, ACCEL/BRAKE - м/с², ROLL - накат без газа,
+  // DRAG - сопротивление, STEER - рад/с на скорости, HP - прочность, FIRE - сколько секунд горит до взрыва
+  const CAR = { HL: 2.0, HW: 0.95, MAX: 15, REV: 5, ACCEL: 9, BRAKE: 22, ROLL: 3, DRAG: 0.3, STEER: 2.7, HP: 220, FIRE: 4, ENTER: 1.7 };
+  const CAR_BLAST = { r: 4, dmg: 95, tile: 320 };
+  // Лёгкие препятствия, которые машина на скорости проламывает
+  const RAMMABLE = [];
+  [B.FENCE, B.CRATE, B.BENCH, B.BARREL, B.GLASS].forEach(t => { RAMMABLE[t] = true; });
+  const RAM_SPEED = 4;
 
   function isSolid(map, tx, ty) {
     if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return true;
@@ -78,7 +91,6 @@
             x += (dx / d) * push;
             y += (dy / d) * push;
           } else {
-            // центр внутри клетки - выталкиваем по ближайшей стороне
             const left = x - tx, right = tx + 1 - x, top = y - ty, bottom = ty + 1 - y;
             const m = Math.min(left, right, top, bottom);
             if (m === left) x = tx - r - 1e-4;
@@ -130,6 +142,187 @@
     return true;
   }
 
+  // ---------- геометрия машин (повёрнутый прямоугольник) ----------
+  // Насколько вытолкнуть машину A, чтобы она не пересекала клетку (tx,ty). null - не пересекает.
+  function obbTileMTV(cx, cy, c, s, hl, hw, tx, ty) {
+    const dx = tx + 0.5 - cx, dy = ty + 0.5 - cy;
+    let best = Infinity, bx = 0, by = 0;
+    for (let i = 0; i < 4; i++) {
+      const ax = i === 0 ? 1 : i === 1 ? 0 : i === 2 ? c : -s;
+      const ay = i === 0 ? 0 : i === 1 ? 1 : i === 2 ? s : c;
+      const rc = hl * Math.abs(c * ax + s * ay) + hw * Math.abs(-s * ax + c * ay);
+      const rt = 0.5 * (Math.abs(ax) + Math.abs(ay));
+      const d = dx * ax + dy * ay;
+      const o = rc + rt - Math.abs(d);
+      if (o <= 0) return null;
+      if (o < best) { best = o; const sg = d > 0 ? -1 : 1; bx = ax * sg * o; by = ay * sg * o; }
+    }
+    return [bx, by];
+  }
+
+  // Насколько вытолкнуть машину A из машины B (обе одного размера). null - не пересекаются.
+  function obbObbMTV(ax, ay, aa, bx, by, ba, hl, hw) {
+    const ca = Math.cos(aa), sa = Math.sin(aa), cb = Math.cos(ba), sb = Math.sin(ba);
+    const dx = bx - ax, dy = by - ay;
+    if (dx * dx + dy * dy > 4 * (hl * hl + hw * hw)) return null;
+    let best = Infinity, mx = 0, my = 0;
+    for (let i = 0; i < 4; i++) {
+      const ux = i === 0 ? ca : i === 1 ? -sa : i === 2 ? cb : -sb;
+      const uy = i === 0 ? sa : i === 1 ? ca : i === 2 ? sb : cb;
+      const ra = hl * Math.abs(ca * ux + sa * uy) + hw * Math.abs(-sa * ux + ca * uy);
+      const rb = hl * Math.abs(cb * ux + sb * uy) + hw * Math.abs(-sb * ux + cb * uy);
+      const d = dx * ux + dy * uy;
+      const o = ra + rb - Math.abs(d);
+      if (o <= 0) return null;
+      if (o < best) { best = o; const sg = d > 0 ? -1 : 1; mx = ux * sg * o; my = uy * sg * o; }
+    }
+    return [mx, my];
+  }
+
+  // Выталкивает круг (человека) из машины. Возвращает новые [x, y] или null, если не пересекаются.
+  function pushOutOBB(x, y, r, cx, cy, a, hl, hw) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const dx = x - cx, dy = y - cy;
+    const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+    if (Math.abs(lx) > hl + r || Math.abs(ly) > hw + r) return null;
+    const qx = Math.max(-hl, Math.min(hl, lx)), qy = Math.max(-hw, Math.min(hw, ly));
+    const ex = lx - qx, ey = ly - qy;
+    const d2 = ex * ex + ey * ey;
+    if (d2 >= r * r) return null;
+    let nlx, nly;
+    if (d2 > 1e-9) {
+      const d = Math.sqrt(d2);
+      nlx = lx + (ex / d) * (r - d + 1e-3);
+      nly = ly + (ey / d) * (r - d + 1e-3);
+    } else if (hl - Math.abs(lx) < hw - Math.abs(ly)) {
+      nlx = (lx >= 0 ? 1 : -1) * (hl + r + 1e-3); nly = ly;
+    } else {
+      nlx = lx; nly = (ly >= 0 ? 1 : -1) * (hw + r + 1e-3);
+    }
+    return [cx + nlx * c - nly * s, cy + nlx * s + nly * c];
+  }
+
+  function distToOBB(x, y, cx, cy, a, hl, hw) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const dx = x - cx, dy = y - cy;
+    const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+    return Math.hypot(Math.max(0, Math.abs(lx) - hl), Math.max(0, Math.abs(ly) - hw));
+  }
+
+  // Для машины твёрдое всё, кроме пустой клетки; вода тоже. Лёгкие препятствия проламываются на скорости.
+  function carSolidAt(map, tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return B.BORDER;
+    const k = ty * map.w + tx;
+    if (map.block[k] !== B.NONE) return map.block[k];
+    return map.ground[k] === G.WATER ? B.BORDER : 0;
+  }
+
+  // Стоит ли машина на твёрдом (не проламываемом) препятствии; shrink - допуск
+  function carHitsHard(map, x, y, a, shrink) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const hl = CAR.HL - shrink, hw = CAR.HW - shrink;
+    for (let ty = Math.floor(y - 2.3); ty <= Math.floor(y + 2.3); ty++) {
+      for (let tx = Math.floor(x - 2.3); tx <= Math.floor(x + 2.3); tx++) {
+        const t = carSolidAt(map, tx, ty);
+        if (!t || RAMMABLE[t]) continue;
+        if (obbTileMTV(x, y, c, s, hl, hw, tx, ty)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Клетки с лёгкими препятствиями под машиной
+  function carOverlapTiles(map, x, y, a, shrink, out) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const hl = CAR.HL - shrink, hw = CAR.HW - shrink;
+    for (let ty = Math.floor(y - 2.3); ty <= Math.floor(y + 2.3); ty++) {
+      for (let tx = Math.floor(x - 2.3); tx <= Math.floor(x + 2.3); tx++) {
+        const t = carSolidAt(map, tx, ty);
+        if (!t || !RAMMABLE[t] || t === B.BORDER) continue;
+        if (obbTileMTV(x, y, c, s, hl, hw, tx, ty)) out.push(ty * map.w + tx);
+      }
+    }
+    return out;
+  }
+
+  /*
+   * Один шаг физики машины. car: {x, y, a, v, sx, sy}; throttle и steer от -1 до 1.
+   * ignore - Set клеток, которые уже проломлены (ещё не подтверждены сервером).
+   * Возвращает { impact: сила удара о твёрдое, rammed: [проломленные клетки] }.
+   */
+  function stepVehicle(map, car, throttle, steer, dt, ignore) {
+    if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : CAR.ACCEL) * throttle * dt;
+    else if (throttle < 0) car.v += (car.v > 0 ? CAR.BRAKE : CAR.ACCEL * 0.6) * throttle * dt;
+    else { const r = CAR.ROLL * dt; car.v = Math.abs(car.v) <= r ? 0 : car.v - Math.sign(car.v) * r; }
+    car.v -= car.v * CAR.DRAG * dt;
+    if (car.v > CAR.MAX) car.v = CAR.MAX;
+    if (car.v < -CAR.REV) car.v = -CAR.REV;
+    const sf = car.v / (Math.abs(car.v) + 2.5);
+    car.a += steer * CAR.STEER * sf * dt;
+    const fr = Math.exp(-5 * dt);
+    car.sx *= fr; car.sy *= fr;
+    const c0 = Math.cos(car.a), s0 = Math.sin(car.a);
+    const mx = (c0 * car.v + car.sx) * dt, my = (s0 * car.v + car.sy) * dt;
+    const n = Math.max(1, Math.ceil(Math.hypot(mx, my) / 0.25));
+    const res = { impact: 0, rammed: [] };
+    const ign = ignore || new Set();
+    for (let i = 0; i < n; i++) {
+      car.x += mx / n; car.y += my / n;
+      resolveCarTiles(map, car, res, ign);
+    }
+    return res;
+  }
+
+  function resolveCarTiles(map, car, res, ign) {
+    for (let iter = 0; iter < 5; iter++) {
+      const c = Math.cos(car.a), s = Math.sin(car.a);
+      let hit = false;
+      for (let ty = Math.floor(car.y - 2.3); ty <= Math.floor(car.y + 2.3); ty++) {
+        for (let tx = Math.floor(car.x - 2.3); tx <= Math.floor(car.x + 2.3); tx++) {
+          const t = carSolidAt(map, tx, ty);
+          if (!t) continue;
+          const k = ty * map.w + tx;
+          if (ign.has(k)) continue;
+          const mtv = obbTileMTV(car.x, car.y, c, s, CAR.HL, CAR.HW, tx, ty);
+          if (!mtv) continue;
+          if (RAMMABLE[t] && Math.abs(car.v) > RAM_SPEED) { ign.add(k); res.rammed.push(k); car.v *= 0.9; continue; }
+          car.x += mtv[0]; car.y += mtv[1];
+          const ml = Math.hypot(mtv[0], mtv[1]) || 1;
+          const nx = mtv[0] / ml, ny = mtv[1] / ml;
+          const vx = c * car.v + car.sx, vy = s * car.v + car.sy;
+          const into = -(vx * nx + vy * ny);
+          if (into > 0) {
+            res.impact = Math.max(res.impact, into);
+            car.v *= into > 4 ? 0.2 : 0.55;
+            const sd = car.sx * nx + car.sy * ny;
+            if (sd < 0) { car.sx -= nx * sd; car.sy -= ny * sd; }
+          }
+          hit = true;
+        }
+      }
+      if (!hit) break;
+    }
+  }
+
+  // Вытолкнуть машину из стен (например, после столкновения с другой машиной)
+  function resolveCar(map, car, ignore) {
+    const res = { impact: 0, rammed: [] };
+    resolveCarTiles(map, car, res, ignore || new Set());
+    return res;
+  }
+
+  // Управление «куда наклонил джойстик - туда и едем»: из направления (jx, jy) получаем газ и руль
+  function steerToward(car, jx, jy) {
+    const m = Math.hypot(jx, jy);
+    if (m < 0.15) return [0, 0];
+    const want = Math.atan2(jy, jx);
+    const diff = Math.atan2(Math.sin(want - car.a), Math.cos(want - car.a));
+    if (Math.abs(diff) < 1.75) return [1, Math.max(-1, Math.min(1, diff * 2.5))];
+    if (car.v > 1) return [-1, 0];
+    const back = Math.atan2(Math.sin(want + Math.PI - car.a), Math.cos(want + Math.PI - car.a));
+    return [-1, -Math.max(-1, Math.min(1, back * 2.5))];
+  }
+
   // 0 - целая, 1..3 - всё сильнее повреждена
   function damageStage(hp, max) {
     if (!(max < Infinity) || max <= 0) return 0;
@@ -160,8 +353,10 @@
   }
 
   return {
-    MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
-    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK,
-    isSolid, collideCircle, moveCircle, circleFree, segmentClear, damageStage, rleEncode, rleDecode
+    MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
+    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
+    isSolid, collideCircle, moveCircle, circleFree, segmentClear,
+    obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, stepVehicle, resolveCar, steerToward,
+    damageStage, rleEncode, rleDecode
   };
 });

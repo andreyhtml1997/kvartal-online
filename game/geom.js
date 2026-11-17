@@ -37,6 +37,26 @@ function rayCircle(x0, y0, dx, dy, cx, cy, r) {
   return t >= 0 ? t : -1;
 }
 
+// Расстояние вдоль луча до повёрнутого прямоугольника (машины) или -1. Начало луча внутри - 0.
+function rayOBB(x0, y0, dx, dy, cx, cy, a, hl, hw) {
+  const c = Math.cos(a), s = Math.sin(a);
+  const ox = x0 - cx, oy = y0 - cy;
+  const l = [ox * c + oy * s, -ox * s + oy * c];
+  const d = [dx * c + dy * s, -dx * s + dy * c];
+  const h = [hl, hw];
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i = 0; i < 2; i++) {
+    if (Math.abs(d[i]) < 1e-9) { if (Math.abs(l[i]) > h[i]) return -1; continue; }
+    let t1 = (-h[i] - l[i]) / d[i], t2 = (h[i] - l[i]) / d[i];
+    if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return -1;
+  }
+  if (tmax < 0) return -1;
+  return tmin >= 0 ? tmin : 0;
+}
+
 const seeThrough = b => !!(BLOCKS[b] && BLOCKS[b].low);
 
 // Есть ли прямая видимость. lowTransparent - сквозь низкие препятствия и стекло видно.
@@ -46,4 +66,4 @@ function losClear(map, x0, y0, x1, y1, lowTransparent) {
   return !raycast(map, x0, y0, (x1 - x0) / d, (y1 - y0) / d, d, lowTransparent ? seeThrough : null);
 }
 
-module.exports = { raycast, rayCircle, losClear };
+module.exports = { raycast, rayCircle, rayOBB, losClear };

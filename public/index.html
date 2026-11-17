@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#121419">
-  <meta name="description" content="Квартал - онлайн-перестрелка в городе с видом сверху. Каждый раз новая карта, разрушаемые стены, оружие появляется на улицах. Играйте с друзьями по ссылке на телефоне и компьютере.">
+  <meta name="description" content="Квартал - онлайн-перестрелка в городе с видом сверху. Каждый раз новая карта, разрушаемые стены, машины, оружие на улицах. Играйте с друзьями по ссылке на телефоне и компьютере.">
   <title>Квартал - перестрелка в городе</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
@@ -25,28 +25,52 @@
 
   <!-- ИГРОВОЙ ИНТЕРФЕЙС -->
   <div id="hud" hidden>
-    <div class="hud-tl">
-      <div class="bar hp" aria-label="Здоровье"><span id="hpFill"></span><b id="hpText">100</b></div>
-      <div class="bar ar" aria-label="Броня"><span id="arFill"></span><b id="arText">0</b></div>
-      <div class="score" id="scoreText">Убийств 0 · Смертей 0</div>
-    </div>
+    <canvas id="minimap" role="button" tabindex="0" aria-label="Радар. Нажмите, чтобы открыть карту города"></canvas>
 
     <div class="hud-top">
       <div id="weaponBar" role="toolbar" aria-label="Оружие"></div>
     </div>
 
     <div class="hud-tr">
-      <div class="hud-buttons">
-        <button type="button" id="btnInvite" class="hbtn">Пригласить</button>
-        <button type="button" id="btnBoard" class="hbtn">Счёт</button>
-        <button type="button" id="btnSound" class="hbtn" aria-pressed="true">Звук</button>
-        <button type="button" id="btnExit" class="hbtn">Выход</button>
+      <div class="vitals">
+        <div class="bar hp" aria-label="Здоровье"><span id="hpFill"></span><b id="hpText">Здоровье 100</b></div>
+        <div class="bar ar" aria-label="Броня"><span id="arFill"></span><b id="arText">Броня 0</b></div>
+        <div class="bar st" aria-label="Выносливость"><span id="stFill"></span><b id="stText">Выносливость</b></div>
+        <div class="bar car" id="carBar" aria-label="Машина" hidden><span id="carFill"></span><b id="carText">Машина</b></div>
+        <div class="score" id="scoreText">Убийств 0 · Смертей 0</div>
       </div>
-      <ul id="feed" aria-live="polite"></ul>
+      <button type="button" id="btnMenu" class="gear" aria-label="Настройки" aria-expanded="false" aria-controls="gearMenu">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.4 7.4 0 0 0-1.7-1L14.4 2.4A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5c.1.2.4.3.6.2l2.5-1c.5.4 1.1.7 1.7 1l.4 2.7c0 .2.2.4.5.4h4c.3 0 .5-.2.5-.4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+      </button>
+    </div>
+    <ul id="feed" aria-live="polite"></ul>
+
+    <div id="gearMenu" role="dialog" aria-label="Настройки" hidden>
+      <button type="button" id="btnInvite" class="gm-item">Пригласить друзей</button>
+      <button type="button" id="btnBoard" class="gm-item">Счёт игроков <small>Tab</small></button>
+      <button type="button" id="btnMap" class="gm-item">Карта города <small>M</small></button>
+      <button type="button" id="btnSound" class="gm-item" aria-pressed="true">Звук: включён</button>
+      <div class="gm-sub">Доступность</div>
+      <button type="button" class="gm-item a11y-opt" data-k="contrast" aria-pressed="false">Высокий контраст</button>
+      <button type="button" class="gm-item a11y-opt" data-k="large" aria-pressed="false">Крупный текст</button>
+      <button type="button" class="gm-item a11y-opt" data-k="motion" aria-pressed="false">Меньше тряски</button>
+      <button type="button" id="btnExit" class="gm-item danger">Выйти в меню</button>
     </div>
 
-    <canvas id="minimap" aria-label="Миникарта"></canvas>
-    <button type="button" id="btnNextWeapon" class="round-btn" aria-label="Следующее оружие">⇄</button>
+    <button type="button" id="btnCar" class="act-btn" hidden aria-label="Сесть в машину">
+      <svg viewBox="0 0 32 24" width="34" height="26" aria-hidden="true"><path fill="currentColor" d="M5 14l2.4-5.6A3 3 0 0 1 10.2 6.5h11.6a3 3 0 0 1 2.8 1.9L27 14h1a2 2 0 0 1 2 2v3h-2.2a3.3 3.3 0 0 1-6.5 0h-10.6a3.3 3.3 0 0 1-6.5 0H2v-3a2 2 0 0 1 2-2zm3.3 0h15.4l-1.8-4.4a1 1 0 0 0-.9-.6H11a1 1 0 0 0-.9.6z"/></svg>
+      <span id="btnCarText">Сесть</span>
+    </button>
+    <button type="button" id="btnSprint" class="act-btn" hidden aria-label="Рывок">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 19 13v-2a5 5 0 0 1-4.3-2.4l-1-1.6a2.1 2.1 0 0 0-2.6-.8L6 8.3V13h2V9.6z"/></svg>
+      <span>Рывок</span>
+    </button>
+    <button type="button" id="btnHorn" class="act-btn" hidden aria-label="Гудок">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 10v4h3l5 4V6L6 10zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+      <span>Гудок</span>
+    </button>
+    <div id="keyHint" hidden></div>
+
     <div id="toast" role="status"></div>
     <div id="rotateHint" hidden>Поверните телефон горизонтально - так видно больше</div>
 
@@ -66,6 +90,11 @@
       </div>
     </div>
 
+    <div id="bigmap" hidden>
+      <canvas id="bigmapCanvas" aria-label="Карта города"></canvas>
+      <div class="bm-hint">Нажмите, чтобы закрыть</div>
+    </div>
+
     <div id="lost" hidden>
       <div class="board-card">
         <p><strong>Связь с сервером потеряна</strong></p>
@@ -79,7 +108,7 @@
   <main id="menu">
     <div class="menu-card">
       <h1 class="logo">КВАРТАЛ</h1>
-      <p class="tag">Перестрелка в городе с видом сверху. Каждый раз новая карта, оружие появляется на улицах, а стены можно разнести.</p>
+      <p class="tag">Перестрелка в городе с видом сверху. Каждый раз новая карта, оружие появляется на улицах, машины можно угнать, а стены - разнести.</p>
 
       <label class="lbl" for="nameInput">Ваше имя</label>
       <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="Игрок" spellcheck="false">
@@ -104,18 +133,19 @@
       <details class="help">
         <summary>Как играть</summary>
         <ul>
-          <li><b>Компьютер:</b> WASD - ходить, мышь - целиться, левая кнопка - стрелять, 1-6 или колесо - оружие, Tab - счёт.</li>
-          <li><b>Телефон:</b> левый палец - ходить, правый палец - целиться и стрелять (короткое касание - один выстрел), ⇄ - сменить оружие.</li>
-          <li>Оружие и патроны появляются на карте примерно раз в 15 секунд. Аптечки и бронежилеты - реже.</li>
+          <li><b>Компьютер:</b> WASD - ходить, Shift - рывок, мышь - целиться, левая кнопка - стрелять (держите - очередь), 1-6 или колесо - оружие, F - сесть в машину и выйти, H - гудок, M - карта, Tab - счёт.</li>
+          <li><b>В машине:</b> W/S - газ и тормоз, A/D - руль, мышь - стрелять из окна.</li>
+          <li><b>Телефон:</b> левый палец - ходить и рулить, правый палец - целиться и стрелять (держите - стреляет без остановки, короткое касание - один выстрел). Кнопки справа: рывок, сесть в машину, гудок.</li>
+          <li>Оружие и патроны появляются на карте примерно раз в 15 секунд, ещё больше - в ящиках. Ящики появляются снова.</li>
           <li>Ломается всё: стёкла, заборы, ящики, деревья, кирпичные стены. Бочки и машины взрываются.</li>
+          <li>Машины с водителями ездят по дорогам - не выбегайте перед ними.</li>
           <li>Зайдите в дом - крыша станет прозрачной. Тех, кто внутри, снаружи не видно.</li>
-          <li>Кто стреляет, тот на пару секунд виден всем на миникарте красной точкой.</li>
         </ul>
       </details>
     </div>
   </main>
 
-  <!-- ДОСТУПНОСТЬ -->
+  <!-- ДОСТУПНОСТЬ (в меню; в игре - в настройках под шестерёнкой) -->
   <button type="button" id="a11yBtn" aria-controls="a11yPanel" aria-expanded="false" aria-label="Настройки доступности">
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="4" r="2" fill="currentColor"/><path d="M5 8.5l7 1.5 7-1.5M12 10v5m0 0l-3.5 6M12 15l3.5 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
   </button>

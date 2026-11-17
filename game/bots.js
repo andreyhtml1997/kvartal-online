@@ -1,14 +1,17 @@
 'use strict';
-/* Боты: ищут оружие, ходят по городу (A* по клеткам), замечают противника и стреляют. */
+/* Боты: ищут оружие, ходят по городу (A* по клеткам), угоняют машины, стреляют - нарочно не слишком метко. */
 const KV = require('../public/shared.js');
 const geom = require('./geom');
-const { G, W, WEAPONS, PK } = KV;
+const { G, W, WEAPONS, PK, CAR } = KV;
 
 const BOT_SPEED = KV.PLAYER_SPEED * 0.85;
 
 class AStar {
-  constructor(map) {
+  // passable(k) - можно ли стоять на клетке; extra(k) - добавочная цена шага (например, не любить дороги)
+  constructor(map, passable, extra) {
     this.map = map;
+    this.passable = passable;
+    this.extra = extra || null;
     const n = map.w * map.h;
     this.g = new Float32Array(n);
     this.parent = new Int32Array(n);
@@ -16,8 +19,6 @@ class AStar {
     this.done = new Uint32Array(n);
     this.gen = 0;
   }
-
-  walk(k) { return this.map.block[k] === 0 && this.map.ground[k] !== G.WATER; }
 
   // Путь из клетки (sx,sy) в (gx,gy): массив центров клеток. Если цель недостижима - путь к ближайшей найденной клетке.
   find(sx, sy, gx, gy, limit = 4000) {
@@ -75,9 +76,9 @@ class AStar {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= Wd || ny >= Hd) continue;
           const nk = ny * Wd + nx;
-          if (this.done[nk] === gen || !this.walk(nk)) continue;
-          if (dx && dy && (!this.walk(y * Wd + nx) || !this.walk(ny * Wd + x))) continue; // не срезать углы
-          const ng = this.g[k] + (dx && dy ? 1.414 : 1);
+          if (this.done[nk] === gen || !this.passable(nk)) continue;
+          if (dx && dy && (!this.passable(y * Wd + nx) || !this.passable(ny * Wd + x))) continue; // не срезать углы
+          const ng = this.g[k] + (dx && dy ? 1.414 : 1) + (this.extra ? this.extra(nk) : 0);
           if (this.seen[nk] === gen && ng >= this.g[nk]) continue;
           this.seen[nk] = gen; this.g[nk] = ng; this.parent[nk] = k;
           push(nk, ng + h(nk));
@@ -98,19 +99,59 @@ class AStar {
 class Bots {
   constructor(room) {
     this.room = room;
-    this.astar = new AStar(room.map);
+    const m = room.map;
+    this.astar = new AStar(m, k => m.block[k] === 0 && m.ground[k] !== G.WATER, k => (m.ground[k] === G.ROAD ? 0.8 : 0));
+    this.driveMask = null;
+    this.driveMaskAt = -100;
+    this.vastar = new AStar(m, k => !!(this.driveMask && this.driveMask[k]));
+  }
+
+  initAi(p) {
+    return (p.ai = {
+      think: Math.random() * 0.3, path: null, pi: 0, target: null, fireAt: 0,
+      strafe: Math.random() < 0.5 ? 1 : -1, strafeT: 1, stuck: 0, repath: 0,
+      aimJ: 0, tvx: 0, tvy: 0, tpx: 0, tpy: 0, tseen: 0, burstEnd: 0, burstPause: 0,
+      likesCars: Math.random() < 0.5, carGoal: 0, carCooldown: 0, driveT: 0, stuckCount: 0
+    });
+  }
+
+  // Прицел с ошибкой: плавающая погрешность + разброс на каждый выстрел, упреждение лишь частичное
+  aimAt(p, ai, t, d) {
+    const w = WEAPONS[p.cur];
+    const lead = w.speed ? (d / w.speed) * 0.3 : 0;
+    const ax = t.x + ai.tvx * lead, ay = t.y + ai.tvy * lead;
+    ai.aimJ = (ai.aimJ + (Math.random() - 0.5) * 0.16) * 0.92;
+    const err = 0.06 + Math.min(0.14, d * 0.006);
+    p.a = Math.atan2(ay - p.y, ax - p.x) + ai.aimJ + (Math.random() - 0.5) * err * 2;
+  }
+
+  // Стреляет очередями: 0.6-1.4 с огня, потом пауза 0.7-1.5 с
+  canShoot(ai, now) {
+    if (now < ai.fireAt) return false;
+    if (now > ai.burstEnd + ai.burstPause) {
+      ai.burstEnd = now + 0.6 + Math.random() * 0.8;
+      ai.burstPause = 0.7 + Math.random() * 0.8;
+    }
+    return now <= ai.burstEnd;
   }
 
   update(p, dt) {
     const room = this.room;
-    const ai = p.ai || (p.ai = {
-      think: Math.random() * 0.3, path: null, pi: 0, target: null, fireAt: 0,
-      strafe: Math.random() < 0.5 ? 1 : -1, strafeT: 1, stuck: 0, repath: 0,
-      aimJ: 0, tvx: 0, tvy: 0, tpx: 0, tpy: 0, tseen: 0
-    });
-    if (!p.alive) { p.fire = false; ai.path = null; ai.target = null; return; }
+    const ai = p.ai || this.initAi(p);
+    if (!p.alive) { p.fire = false; ai.path = null; ai.target = null; ai.carGoal = 0; return; }
     ai.think -= dt;
     if (ai.think <= 0) { ai.think = 0.22 + Math.random() * 0.12; this.think(p, ai); }
+    if (p.vehicle) return;
+
+    // дошёл до машины - садится
+    if (ai.carGoal) {
+      const v = room.vehicles.list.get(ai.carGoal);
+      if (!v || v.dead || v.state !== 'parked' || v.burn > 0) ai.carGoal = 0;
+      else if (KV.distToOBB(p.x, p.y, v.x, v.y, v.a, CAR.HL, CAR.HW) < CAR.ENTER - 0.2) {
+        ai.carGoal = 0;
+        if (room.vehicles.enter(p, v.id)) { ai.driveT = 0; ai.stuckCount = 0; ai.vpath = null; return; }
+      }
+    }
 
     const t = ai.target;
     let mx = 0, my = 0;
@@ -124,14 +165,10 @@ class Bots {
       const sw = WEAPONS[p.cur].melee ? 0.25 : 0.7;
       mx = ux * fwd - uy * ai.strafe * sw;
       my = uy * fwd + ux * ai.strafe * sw;
-      // прицел с упреждением и человеческой ошибкой
+      this.aimAt(p, ai, t, d);
       const w = WEAPONS[p.cur];
-      const lead = w.speed ? d / w.speed : 0;
-      const ax = t.x + ai.tvx * lead, ay = t.y + ai.tvy * lead;
-      ai.aimJ = (ai.aimJ + (Math.random() - 0.5) * 0.09) * 0.9;
-      p.a = Math.atan2(ay - p.y, ax - p.x) + ai.aimJ + (Math.random() - 0.5) * 0.05;
-      const range = w.melee ? 1.25 : (w.range || 30) * 0.85;
-      p.fire = room.time >= ai.fireAt && d <= range;
+      const range = w.melee ? 1.25 : (w.range || 30) * 0.8;
+      p.fire = d <= range && this.canShoot(ai, room.time);
     } else {
       p.fire = false;
       if (ai.path && ai.pi < ai.path.length) {
@@ -141,8 +178,7 @@ class Bots {
         else { mx = dx / d; my = dy / d; }
       }
       if (mx || my) {
-        const want = Math.atan2(my, mx);
-        let diff = want - p.a;
+        let diff = Math.atan2(my, mx) - p.a;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
         p.a += diff * Math.min(1, dt * 10);
       }
@@ -150,7 +186,13 @@ class Bots {
 
     const len = Math.hypot(mx, my);
     if (len > 1) { mx /= len; my /= len; }
-    const [nx, ny] = KV.moveCircle(room.map, p.x, p.y, mx * BOT_SPEED * dt, my * BOT_SPEED * dt, KV.PLAYER_R);
+    let [nx, ny] = KV.moveCircle(room.map, p.x, p.y, mx * BOT_SPEED * dt, my * BOT_SPEED * dt, KV.PLAYER_R);
+    // машины - препятствие
+    for (const v of room.vehicles.list.values()) {
+      if (v.dead || Math.abs(v.x - nx) > 3 || Math.abs(v.y - ny) > 3) continue;
+      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      if (out) [nx, ny] = KV.collideCircle(room.map, out[0], out[1], KV.PLAYER_R);
+    }
     const moved = Math.hypot(nx - p.x, ny - p.y);
     if (len > 0.1 && moved < BOT_SPEED * dt * 0.2) {
       ai.stuck += dt;
@@ -161,7 +203,7 @@ class Bots {
 
   think(p, ai) {
     const room = this.room, now = room.time;
-    let best = null, bestD = 20;
+    let best = null, bestD = p.vehicle ? 30 : 16;
     for (const o of room.players.values()) {
       if (o === p || !o.alive) continue;
       const d = Math.hypot(o.x - p.x, o.y - p.y);
@@ -171,7 +213,7 @@ class Bots {
     }
     if (best) {
       if (best !== ai.target) {
-        ai.fireAt = now + 0.35 + Math.random() * 0.4; // реакция
+        ai.fireAt = now + 0.55 + Math.random() * 0.5; // реакция
         ai.tvx = 0; ai.tvy = 0;
       } else {
         const el = Math.max(0.05, now - ai.tseen);
@@ -181,8 +223,30 @@ class Bots {
       ai.tpx = best.x; ai.tpy = best.y; ai.tseen = now;
     }
     ai.target = best;
+    if (p.vehicle) return; // за рулём - своя логика в driveControl
     this.pickWeapon(p, best ? bestD : 99);
-    if (best) { ai.path = null; return; }
+    if (best) { ai.path = null; ai.carGoal = 0; return; }
+
+    // иногда угоняет машину
+    if (!ai.carGoal && ai.likesCars && now > ai.carCooldown) {
+      let car = null, cd = 22;
+      for (const v of room.vehicles.list.values()) {
+        if (v.dead || v.burn > 0 || v.state !== 'parked' || v.hp < CAR.HP * 0.5) continue;
+        const d = Math.hypot(v.x - p.x, v.y - p.y);
+        if (d < cd) { cd = d; car = v; }
+      }
+      if (car) ai.carGoal = car.id;
+      else ai.carCooldown = now + 8;
+    }
+    if (ai.carGoal) {
+      const v = room.vehicles.list.get(ai.carGoal);
+      if (v && (!ai.path || ai.pi >= ai.path.length || now > ai.repath)) {
+        ai.path = this.astar.find(Math.floor(p.x), Math.floor(p.y), Math.floor(v.x), Math.floor(v.y));
+        ai.pi = 0;
+        ai.repath = now + 2;
+      }
+      return;
+    }
 
     if (ai.path && ai.pi < ai.path.length && now < ai.repath) return;
     let gx, gy;
@@ -190,7 +254,6 @@ class Bots {
     const pk = this.nearestUseful(p, !strong);
     let prey = null;
     if (strong) {
-      // с оружием бот идёт охотиться: к ближайшему живому противнику
       let pd = 1e9;
       for (const o of room.players.values()) {
         if (o === p || !o.alive) continue;
@@ -212,6 +275,90 @@ class Bots {
     ai.path = this.astar.find(Math.floor(p.x), Math.floor(p.y), Math.floor(gx), Math.floor(gy));
     ai.pi = 0;
     ai.repath = now + 4;
+  }
+
+  // ---------- бот за рулём ----------
+  buildDriveMask() {
+    const m = this.room.map, Wd = m.w, Hd = m.h;
+    const hard = new Uint8Array(Wd * Hd);
+    for (let k = 0; k < Wd * Hd; k++) {
+      const t = m.block[k];
+      hard[k] = (t !== 0 && !KV.RAMMABLE[t]) || m.ground[k] === G.WATER ? 1 : 0;
+    }
+    const mask = new Uint8Array(Wd * Hd);
+    for (let y = 1; y < Hd - 1; y++) {
+      for (let x = 1; x < Wd - 1; x++) {
+        let ok = 1;
+        for (let j = -1; j <= 1 && ok; j++) for (let i = -1; i <= 1; i++) if (hard[(y + j) * Wd + x + i]) { ok = 0; break; }
+        mask[y * Wd + x] = ok;
+      }
+    }
+    this.driveMask = mask;
+    this.driveMaskAt = this.room.time;
+  }
+
+  // Возвращает [газ, руль] для машины v, которой рулит бот p
+  driveControl(p, v, dt) {
+    const room = this.room, now = room.time;
+    const ai = p.ai || this.initAi(p);
+    ai.driveT += dt;
+    if (!this.driveMask || now - this.driveMaskAt > 10) this.buildDriveMask();
+    if (v.hp < CAR.HP * 0.3 || v.burn > 0 || ai.driveT > 75 || ai.stuckCount >= 3) {
+      if (room.vehicles.exit(p, false)) {
+        ai.driveT = 0; ai.stuckCount = 0; ai.carCooldown = now + 25; ai.path = null; ai.vpath = null;
+        return [0, 0];
+      }
+    }
+    // цель: ближайший противник, иначе куда-нибудь по городу
+    let target = null, bd = 50;
+    for (const o of room.players.values()) {
+      if (o === p || !o.alive) continue;
+      const d = Math.hypot(o.x - v.x, o.y - v.y);
+      if (d < bd) { bd = d; target = o; }
+    }
+    let gx, gy;
+    if (target) { gx = target.x; gy = target.y; }
+    else {
+      if (!ai.dest || Math.hypot(ai.dest[0] - v.x, ai.dest[1] - v.y) < 8 || now > ai.destT) {
+        const tiles = room.map.pickupTiles;
+        const k = tiles[Math.floor(Math.random() * tiles.length)];
+        ai.dest = [(k % room.map.w) + 0.5, Math.floor(k / room.map.w) + 0.5];
+        ai.destT = now + 25;
+      }
+      [gx, gy] = ai.dest;
+    }
+    if (!ai.vpath || now > ai.vrepath || ai.vpi >= ai.vpath.length) {
+      ai.vpath = this.vastar.find(Math.floor(v.x), Math.floor(v.y), Math.floor(gx), Math.floor(gy), 3000);
+      ai.vpi = 0;
+      ai.vrepath = now + 1.2;
+    }
+    let tx = gx, ty = gy;
+    if (ai.vpath && ai.vpath.length) {
+      while (ai.vpi < ai.vpath.length - 1 && Math.hypot(ai.vpath[ai.vpi][0] - v.x, ai.vpath[ai.vpi][1] - v.y) < 4.5) ai.vpi++;
+      [tx, ty] = ai.vpath[Math.min(ai.vpi, ai.vpath.length - 1)];
+    }
+    const los = target && bd < 16 && geom.losClear(room.map, v.x, v.y, target.x, target.y, true);
+    if (los && !target.vehicle) { tx = target.x; ty = target.y; } // видит пешего - давит
+    if (ai.revT > 0) { ai.revT -= dt; p.fire = false; return [-1, -ai.revSteer]; }
+    const want = Math.atan2(ty - v.y, tx - v.x);
+    const diff = Math.atan2(Math.sin(want - v.a), Math.cos(want - v.a));
+    const thr = Math.abs(diff) < 1.2 ? 1 : 0.45;
+    const steer = Math.max(-1, Math.min(1, diff * 2.2));
+    if (Math.abs(v.v) < 0.8) {
+      ai.vstuck = (ai.vstuck || 0) + dt;
+      if (ai.vstuck > 1.3) { ai.vstuck = 0; ai.revT = 0.9; ai.revSteer = steer >= 0 ? 1 : -1; ai.stuckCount++; ai.vrepath = 0; }
+    } else {
+      ai.vstuck = 0;
+      if (Math.abs(v.v) > 4) ai.stuckCount = 0;
+    }
+    // стрельба из окна
+    if (p.cur === W.FISTS) this.pickWeapon(p, bd);
+    p.fire = false;
+    if (los && bd < 14 && p.cur !== W.FISTS && p.ammo[p.cur] > 0) {
+      this.aimAt(p, ai, target, bd);
+      p.fire = this.canShoot(ai, now);
+    }
+    return [thr, steer];
   }
 
   pickWeapon(p, d) {

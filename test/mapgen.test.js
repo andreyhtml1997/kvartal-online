@@ -23,7 +23,10 @@ for (let seed = 1; seed <= 60; seed++) {
   worstReach = Math.min(worstReach, reach / walk);
   minSpawns = Math.min(minSpawns, m.spawnTiles.length);
   minBuildings = Math.min(minBuildings, m.buildings.length);
-  cars += m.objects.length;
+  cars += m.carSpawns.length;
+  for (const c of m.carSpawns) assert.ok(!KV.carHitsHard(m, c.x, c.y, c.a, 0.05), "машина на парковке стоит в стене");
+  for (let k = 0; k < w * h; k++) if (m.ground[k] === G.ROAD) assert.strictEqual(m.block[k], B.NONE, "дорога свободна для машин");
+  for (const k of m.spawnTiles) assert.notStrictEqual(m.ground[k], G.ROAD, "не появляемся на дороге");
   for (const b of m.buildings) {
     assert.ok(b.walls > 0, 'у дома есть стены');
     // в каждый дом можно зайти: хотя бы одна клетка пола внутри достижима
