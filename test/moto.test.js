@@ -51,7 +51,7 @@ room.fillBots();
 const V = room.vehicles, m = room.map;
 me.prot = 0; att.prot = 0;
 const spawns = m.carSpawns.filter(c => c.moto);
-const motos = [...V.list.values()].filter(v => v.moto);
+const motos = [...V.list.values()].filter(v => v.moto && v.spawn); // стоящие на стоянках (в потоке тоже ездят мотоциклисты)
 console.log(`на карте мотоциклов: ${motos.length} (у больницы и оружейного ${spawns.filter(s => m.shops.some(q => (q.kind === 'med' || q.kind === 'gun') && Math.hypot(q.x - s.x, q.y - s.y) < 9)).length})`);
 assert.ok(motos.length >= 4 && motos.length <= 6 && motos.every(v => v.kind === 'moto'), 'на карте 4-6 мотоциклов');
 assert.ok(motos.every(v => V.snap(v)[10] === 5 && v.maxHp === VEH.moto.hp), 'в снимке вид 5, своя прочность');

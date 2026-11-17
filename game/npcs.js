@@ -490,7 +490,7 @@ class Npcs {
     const room = this.room, now = room.time;
     // служебные машины с водителем-NPC своих (полицию, спецназ, армию, врачей) не давят, скорая - вообще никого:
     // замер 17.11 - скорая сбивала полицейских у игрока и потом сама же ехала за телами
-    const service = v.state === 'npc' && (v.kind === 'police' || v.kind === 'swat' || v.kind === 'tank' || v.kind === 'amb');
+    const service = v.state === 'npc' && (v.kind === 'police' || v.kind === 'pmoto' || v.kind === 'swat' || v.kind === 'tank' || v.kind === 'amb');
     for (const n of this.list.values()) {
       if (!n.alive || n.veh || Math.abs(n.x - v.x) > 3.2 || Math.abs(n.y - v.y) > 3.2) continue;
       const out = KV.pushOutOBB(n.x, n.y, KV.PLAYER_R + 0.05, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
@@ -699,7 +699,7 @@ class Npcs {
       if (!t || !t.alive || !(t.stars > 0)) { v.role = 'leave'; v.siren = false; P.dest = null; }
       else {
         gx = txp; gy = typ;
-        if (tv && t.stars >= 2 && los) direct = true; // таранит машину того, кого ищут
+        if (tv && t.stars >= 2 && los && !v.moto) direct = true; // таранит машину того, кого ищут (мотоцикл - нет, слетит)
         // пешего вблизи - выходят и стреляют
         if (!t.vehicle && ((dT < 11 && los) || (dT < 18 && Math.abs(v.v) < 1 && (P.slowT = (P.slowT || 0) + dt) > 1.5))) {
           for (const id of [...v.crew]) { const c = this.list.get(id); if (c) { this.exitCar(v, c); this.fight(c, t.id, 90); } }
@@ -709,6 +709,9 @@ class Npcs {
         // с 3 звёзд напарник стреляет из окна
         const mate = v.crew[1] ? this.list.get(v.crew[1]) : null;
         if (mate && t.stars >= 3 && los && dT < 15 && room.onScreenOf(t, v.x, v.y) && now >= mate.nextShot && this.canShoot(mate, now)) this.shoot(mate, txp, typ, dT, v.id, v.x + Math.cos(v.a + 1.57) * 0.6, v.y + Math.sin(v.a + 1.57) * 0.6);
+        // коп на мотоцикле стреляет на ходу - с той же полицейской неметкостью
+        const rider = v.moto && v.crew[0] ? this.list.get(v.crew[0]) : null;
+        if (rider && rider.w && los && dT < 20 && room.onScreenOf(t, v.x, v.y) && now >= rider.nextShot && this.canShoot(rider, now)) this.shoot(rider, txp, typ, dT, v.id, v.x, v.y);
       }
     }
     if (v.role === 'tank') {
@@ -770,7 +773,7 @@ class Npcs {
     if (P.revT > 0) { P.revT -= dt; return [-1, -P.revSteer]; }
     const diff = angDiff(Math.atan2(ty - v.y, tx - v.x), v.a);
     // жители водят аккуратнее игроков: своя предельная скорость и торможение перед поворотом (иначе бьются о стены)
-    limit = Math.min(limit, v.maxV || 99, v.role === 'ram' ? 18 : v.role === 'police' ? 16 : v.role === 'amb' ? 14 : 13);
+    limit = Math.min(limit, v.maxV || 99, v.role === 'ram' ? 18 : v.role === 'police' ? (v.moto ? 21 : 16) : v.role === 'amb' ? 14 : 13);
     if (Math.abs(diff) > 0.5) limit = Math.min(limit, 7);
     let thr = Math.abs(diff) < 1.2 ? 1 : 0.45;
     if (v.v > limit) thr = v.v > limit + 2 ? -0.6 : 0;
@@ -781,6 +784,31 @@ class Npcs {
     } else P.stuck = 0;
     v.brake = thr <= 0;
     return [thr, steer];
+  }
+
+  // Мотоциклист-житель или коп слетел с мотоцикла (пуля, сильный удар, взрывная волна): падает рядом - ранен или погиб;
+  // мотоцикл остаётся лежать, его можно забрать (решение владельца 18.11.2026: жители и копы вылетают, игроки - нет)
+  riderOff(v, attackerId, dmg, weaponId, dx, dy) {
+    const room = this.room;
+    let n = null;
+    if (v.state === 'npc' && v.crew && v.crew.length) { n = this.list.get(v.crew[0]); if (n) this.exitCar(v, n); }
+    else if (v.state === 'traffic') {
+      room.vehicles.releaseAll(v);
+      n = this.create(K.CIV, v.x, v.y, { w: Math.random() < 0.25 ? this.randomGun() : 0, hp: 70 });
+      v.state = 'parked'; v.ai = null; v.crew = []; v.brake = false;
+    }
+    v.v *= 0.3; v.sx *= 0.3; v.sy *= 0.3;
+    if (!n) return null;
+    const ux = dx === undefined ? Math.cos(v.a) : dx, uy = dy === undefined ? Math.sin(v.a) : dy;
+    const q = KV.moveCircle(this.map, n.x, n.y, ux * 1.6, uy * 1.6, KV.PLAYER_R);
+    n.x = q[0]; n.y = q[1];
+    if (dmg > 0) this.damage(n, dmg, attackerId, weaponId, n.x, n.y);
+    if (n.alive) {
+      if (LAW.has(n.kind)) { const t = this.targetOf(v.target); if (t && t.alive) this.fight(n, t.id, 90); else this.leave(n); }
+      else if (n.w && attackerId > 0) this.fight(n, attackerId, 20);
+      else this.flee(n, n.x - ux * 3, n.y - uy * 3, rnd(6, 10));
+    }
+    return n;
   }
 
   // ======================================================================
@@ -897,7 +925,7 @@ class Npcs {
     let total = 0;
     const per = new Map();
     for (const v of room.vehicles.list.values()) {
-      if (v.dead || v.kind !== 'police' || v.state !== 'npc' || v.role !== 'police') continue;
+      if (v.dead || (v.kind !== 'police' && v.kind !== 'pmoto') || v.state !== 'npc' || v.role !== 'police') continue;
       total++;
       per.set(v.target, (per.get(v.target) || 0) + 1);
     }
@@ -914,10 +942,14 @@ class Npcs {
       const sp = this.roadSpawn(p.x, p.y, 30, 55);
       if (!sp) continue;
       const v = room.vehicles.create(sp.x, sp.y, sp.a, 6, 'npc', null);
-      v.kind = 'police'; v.role = 'police'; v.target = p.id; v.siren = true; v.pilot = {};
+      // каждый третий выезд - мотоцикл с одним копом (18.11.2026): быстрее, стреляет на ходу, вблизи слезает
+      const moto = (this.policeN = (this.policeN || 0) + 1) % 3 === 0;
+      if (moto) room.vehicles.setKind(v, 'pmoto'); else v.kind = 'police';
+      v.role = 'police'; v.target = p.id; v.siren = true; v.pilot = {};
       const gun = p.stars <= 2 ? W.PISTOL : p.stars === 3 ? W.SHOTGUN : W.RIFLE;
-      v.crew = [this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun, hp: 100 }).id,
-        this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun === W.PISTOL ? W.PISTOL : W.SHOTGUN, hp: 100 }).id];
+      v.crew = moto ? [this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: p.stars <= 2 ? W.PISTOL : W.UZI, hp: 100 }).id]
+        : [this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun, hp: 100 }).id,
+          this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun === W.PISTOL ? W.PISTOL : W.SHOTGUN, hp: 100 }).id];
       total++;
       per.set(groupOf(p.id), (per.get(groupOf(p.id)) || 0) + 1);
     }

@@ -90,4 +90,14 @@ const step = (room, n) => { for (let i = 0; i < n; i++) { room.time += DT; room.
   console.log(`разогнали ${cars.length} стоящих машин в случайные стороны: в стене ${bad}`);
   assert.strictEqual(bad, 0, 'машины не влезают в стены');
 }
+// ручник (18.11.2026): на ходу с поворотом - машина тормозит, кузов разворачивает круче, появляется боковой занос
+{
+  const open = { w: 300, h: 300, block: new Uint8Array(300 * 300), ground: new Uint8Array(300 * 300) };
+  const run = hand => { const c = { x: 150, y: 150, a: 0, v: 15, sx: 0, sy: 0, w: 0 }; for (let t = 0; t < 0.6; t += 1 / 30) KV.stepVehicle(open, c, 0, 1, 1 / 30, null, hand); return c; };
+  const plain = run(false), hb = run(true);
+  const slide = Math.hypot(hb.sx, hb.sy);
+  console.log(`ручник: курс ${hb.a.toFixed(2)} против ${plain.a.toFixed(2)}, скорость ${hb.v.toFixed(1)} против ${plain.v.toFixed(1)}, занос ${slide.toFixed(1)} м/с`);
+  assert.ok(hb.a > plain.a * 1.3 && Math.abs(hb.v) < Math.abs(plain.v) - 3 && slide > 2, 'ручник: тормозит, разворачивает круче, уводит в занос');
+}
+
 console.log('carphys: OK');

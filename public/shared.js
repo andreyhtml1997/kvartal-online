@@ -94,6 +94,7 @@
   // DRAG - сопротивление, STEER - рад/с на скорости, HP - прочность, FIRE - сколько секунд горит до взрыва
   const CAR = { HL: 2.0, HW: 0.95, MAX: 21, REV: 7, ACCEL: 14, BRAKE: 26, ROLL: 3, DRAG: 0.3, STEER: 3.0, HP: 220, FIRE: 4, ENTER: 1.7 };
   const CAR_BLAST = { r: 4, dmg: 95, tile: 320 };
+  const HANDBRAKE = 12;           // м/с²: торможение ручником (ногой - CAR.BRAKE)
   // Особая техника: прочность, предел скорости, разгон, руль, какая доля урона от пуль и взрывов доходит,
   // насколько сдвигает взрывная волна; танк давит кирпич и лёгкое даже стоя; у мотоцикла свой габарит (hl, hw)
   const VEH = {
@@ -104,6 +105,7 @@
     // в него попадают пули, огонь и взрывы, а от сильного удара он вылетает через руль
     moto: { hp: 110, maxV: 27, acc: 19, steer: 4.4, bullet: 1, blast: 1.3, push: 1.6, hl: 1.0, hw: 0.38 }
   };
+  VEH.pmoto = VEH.moto; // полицейский мотоцикл (18.11.2026) - тот же мотоцикл в другой раскраске
   // габарит (половина длины и ширины): у мотоцикла свой, у остальной техники - как у машины
   const CAR_BOX = { hl: CAR.HL, hw: CAR.HW }, MOTO_BOX = { hl: VEH.moto.hl, hw: VEH.moto.hw };
   const boxOf = v => (v && v.moto ? MOTO_BOX : CAR_BOX);
@@ -326,26 +328,37 @@
    * ignore - Set клеток, которые уже проломлены (ещё не подтверждены сервером).
    * Возвращает { impact: сила удара о твёрдое, rammed: [проломленные клетки] }.
    */
-  function stepVehicle(map, car, throttle, steer, dt, ignore) {
+  function stepVehicle(map, car, throttle, steer, dt, ignore, hand) {
     const px = car.x, py = car.y, pa = car.a;
     if (!car.w) car.w = 0;
     // у тяжёлой техники свой разгон и предел скорости
     const acc = car.acc || CAR.ACCEL, maxV = car.maxV || CAR.MAX;
-    if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : acc) * throttle * dt;
+    if (hand) {
+      // ручник (пробел, 18.11.2026): задние колёса встали - газ не тянет, машина тормозит, а на ходу легко уходит в занос
+      const r = HANDBRAKE * dt;
+      car.v = Math.abs(car.v) <= r ? 0 : car.v - Math.sign(car.v) * r;
+    } else if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : acc) * throttle * dt;
     else if (throttle < 0) car.v += (car.v > 0 ? CAR.BRAKE : acc * 0.6) * throttle * dt;
     else { const r = CAR.ROLL * dt; car.v = Math.abs(car.v) <= r ? 0 : car.v - Math.sign(car.v) * r; }
     car.v -= car.v * CAR.DRAG * dt;
     if (car.v > maxV) car.v = maxV;
     if (car.v < -CAR.REV) car.v = -CAR.REV;
     const sf = car.v / (Math.abs(car.v) + 2.5);
-    car.a += (steer * (car.steer || CAR.STEER) * sf + car.w) * dt;
+    const a0 = car.a;
+    car.a += (steer * (car.steer || CAR.STEER) * (hand && Math.abs(car.v) > 3 ? 1.8 : 1) * sf + car.w) * dt;
+    if (hand && Math.abs(car.v) > 2) {
+      // скорость не успевает за поворотом кузова: часть уходит в боковой занос
+      const c1 = Math.cos(a0), s1 = Math.sin(a0), c2 = Math.cos(car.a), s2 = Math.sin(car.a);
+      const vx = c1 * car.v, vy = s1 * car.v, fwd = vx * c2 + vy * s2;
+      car.sx += vx - c2 * fwd; car.sy += vy - s2 * fwd; car.v = fwd;
+    }
     car.w *= Math.exp(-2.5 * dt);
     if (Math.abs(car.w) < 0.01) car.w = 0;
-    const fr = Math.exp(-3.5 * dt);
+    const fr = Math.exp(-(hand ? 1.4 : 3.5) * dt); // с ручником занос держится дольше
     car.sx *= fr; car.sy *= fr;
     const c0 = Math.cos(car.a), s0 = Math.sin(car.a);
     const mx = (c0 * car.v + car.sx) * dt, my = (s0 * car.v + car.sy) * dt;
-    const n = Math.max(1, Math.ceil(Math.hypot(mx, my) / 0.25));
+    const n = Math.min(40, Math.max(1, Math.ceil(Math.hypot(mx, my) / 0.25))); // предел подшагов - на случай выброса скорости
     const res = { impact: 0, rammed: [] };
     const ign = ignore || new Set();
     for (let i = 0; i < n; i++) {

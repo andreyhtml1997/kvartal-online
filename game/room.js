@@ -11,7 +11,7 @@ const geom = require('./geom');
 const { Bots } = require('./bots');
 const { Vehicles } = require('./vehicles');
 const { Npcs, LAW_SHOT } = require('./npcs');
-const LAW_CAR = { police: true, swat: true, tank: true }; // машины закона: пули полиции, спецназа и армии их не портят
+const LAW_CAR = { police: true, pmoto: true, swat: true, tank: true }; // машины закона: пули полиции, спецназа и армии их не портят
 const { G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, STAMINA } = KV;
 
 const DT = 1 / KV.TICK_RATE;
@@ -657,7 +657,7 @@ class Room {
       const high = b.air === 2;
       const hitT = high ? null : geom.raycast(m, b.x, b.y, b.dx, b.dy, step);
       if (b.flame) { this.stepFlame(b, step, hitT); continue; }
-      let tBest = hitT ? hitT.t : Infinity, target = null, car = null, npcT = null, heli = null;
+      let tBest = hitT ? hitT.t : Infinity, target = null, car = null, npcT = null, heli = null, rider = null;
       if (!high) {
         for (const p of this.players.values()) {
           if (!p.alive || p.id === b.owner || !this.exposed(p) || this.allyHit(p, b.owner)) continue; // мотоциклиста пуля находит, своих в банде - нет
@@ -671,16 +671,21 @@ class Room {
           if (v.dead || v.id === b.veh) continue;
           if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
           const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
-          if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; }
+          if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; rider = null; }
+          // житель или коп на мотоцикле сидит открыто: пуля, долетевшая до него раньше мотоцикла, - в него (свои копы не задевают)
+          if (v.moto && (v.state === 'traffic' || v.state === 'npc') && !(LAW_SHOT.has(b.owner) && v.kind === 'pmoto')) {
+            const tr = geom.rayCircle(b.x, b.y, b.dx, b.dy, v.x, v.y, 0.5);
+            if (tr >= 0 && tr <= step && tr < tBest) { tBest = tr; rider = v; car = null; target = null; npcT = null; }
+          }
         }
       }
       // полицейский вертолёт: в него попадают пули игроков и ботов
       if (b.owner > 0 && b.air !== 1) {
         const hh = this.npcs.heliHit(b, step, tBest);
-        if (hh) { tBest = hh.t; heli = hh.h; target = null; npcT = null; car = null; }
+        if (hh) { tBest = hh.t; heli = hh.h; target = null; npcT = null; car = null; rider = null; }
       }
       const w = WEAPONS[b.w];
-      if (target || car || npcT || heli || (hitT && hitT.t <= step)) {
+      if (target || car || npcT || heli || rider || (hitT && hitT.t <= step)) {
         const back = w.grenade ? 0.08 : 0;
         const hx = b.x + b.dx * Math.max(0, tBest - back), hy = b.y + b.dy * Math.max(0, tBest - back);
         b.dead = true;
@@ -695,6 +700,10 @@ class Room {
         } else if (npcT) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
           this.npcs.damage(npcT, w.dmg * fall, b.owner, w.id, hx, hy);
+        } else if (rider) {
+          // мотоциклист-житель или коп: пуля сбрасывает его с мотоцикла (ранен или погиб), мотоцикл остаётся
+          this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
+          this.npcs.riderOff(rider, b.owner, w.dmg * fall, w.id, b.dx, b.dy);
         } else if (heli) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 4]);
           this.npcs.heliDamage(heli, w.dmg * fall * HELI_BULLET, b.owner);

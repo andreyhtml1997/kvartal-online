@@ -913,7 +913,7 @@
   // Машина: a - курс (0 - на восток). Модель рисуется носом вверх, поэтому поворот a + 90°.
   function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine, kind, now, v) {
     if (kind === 4) { drawTank(x, y, a, st, fl, mine, now || performance.now(), v && v.tr !== undefined ? v.tr : a, v ? v.trk || 0 : 0); return; }
-    if (kind === 5) { drawMoto(x, y, a, colorIdx, st, fl, speed, mine, v); return; }
+    if (kind === 5 || kind === 6) { drawMoto(x, y, a, colorIdx, st, fl, speed, mine, v); return; }
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(a + Math.PI / 2);
@@ -971,9 +971,11 @@
     roundRect(ctx, -0.12, -1.02, 0.24, 0.58, 0.11); ctx.fill();
     roundRect(ctx, -0.15, 0.42, 0.3, 0.6, 0.13); ctx.fill();
     ctx.fillStyle = '#3c3f44'; ctx.fillRect(-0.07, -0.62, 0.14, 1.2);
-    const body = CAR_COLORS[colorIdx] || '#888';
+    const police = !!v && v.kind === 6;
+    const body = police ? '#f2f2f2' : CAR_COLORS[colorIdx] || '#888';
     ctx.fillStyle = body; roundRect(ctx, -0.24, -0.64, 0.48, 0.64, 0.2); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.22)'; roundRect(ctx, -0.12, -0.58, 0.12, 0.42, 0.06); ctx.fill();
+    if (police) { ctx.fillStyle = '#1f3a93'; ctx.fillRect(-0.24, -0.42, 0.48, 0.12); }
     ctx.fillStyle = '#1b1b1b'; roundRect(ctx, -0.18, 0.0, 0.36, 0.58, 0.12); ctx.fill();
     ctx.fillStyle = body; roundRect(ctx, -0.16, 0.58, 0.32, 0.3, 0.1); ctx.fill();
     ctx.fillStyle = fl & 1 ? '#ff2a2a' : '#a8241c'; ctx.fillRect(-0.09, 0.9, 0.18, fl & 1 ? 0.1 : 0.07);
@@ -983,10 +985,17 @@
     ctx.beginPath(); ctx.moveTo(-0.4, -0.66); ctx.lineTo(0.4, -0.66); ctx.stroke();
     ctx.fillStyle = '#9aa3ad'; ctx.beginPath(); ctx.arc(-0.44, -0.72, 0.07, 0, Math.PI * 2); ctx.arc(0.44, -0.72, 0.07, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#fff6c2'; ctx.beginPath(); ctx.arc(0, -0.95, 0.09, 0, Math.PI * 2); ctx.fill();
-    // водитель: руки на руле, плечи в цвет игрока, голова
+    if (police) {
+      // мигалки у руля: красная и синяя, мигают, когда едет на вызов
+      const on = fl & 16, ph = Math.floor(performance.now() / 160) % 2;
+      ctx.fillStyle = on ? (ph ? '#ff2a2a' : '#5a1a1a') : '#5a2020'; ctx.beginPath(); ctx.arc(-0.24, -0.78, 0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = on ? (ph ? '#1a2a5a' : '#2a6bff') : '#20305a'; ctx.beginPath(); ctx.arc(0.24, -0.78, 0.08, 0, Math.PI * 2); ctx.fill();
+    }
+    // водитель: руки на руле, плечи (игрок - в свой цвет, житель - в куртке, коп - в форме), голова или шлем
     const d = v && v.driver && !(v.fl & 4) ? S.players.get(v.driver) : null;
-    if (d) {
-      const col = d.color || '#fff';
+    const npcRider = !!v && !!(v.fl & 4);
+    if (d || npcRider) {
+      const col = d ? d.color || '#fff' : police ? '#1f3a93' : MOTO_JACKETS[(v.id * 7) % MOTO_JACKETS.length];
       ctx.strokeStyle = col; ctx.lineWidth = 0.13;
       ctx.beginPath(); ctx.moveTo(-0.3, -0.02); ctx.lineTo(-0.36, -0.58); ctx.moveTo(0.3, -0.02); ctx.lineTo(0.36, -0.58); ctx.stroke();
       ctx.fillStyle = '#d9a77c';
@@ -994,8 +1003,13 @@
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.ellipse(0, 0.08, 0.44, 0.24, 0, 0, Math.PI * 2); ctx.fill();
       ctx.lineWidth = mine ? 0.09 : 0.05; ctx.strokeStyle = mine ? '#ffffff' : 'rgba(0,0,0,0.55)'; ctx.stroke();
-      ctx.fillStyle = '#2b1d14';
-      ctx.beginPath(); ctx.arc(0, 0.04, 0.22, 0, Math.PI * 2); ctx.fill();
+      if (d) { ctx.fillStyle = '#2b1d14'; ctx.beginPath(); ctx.arc(0, 0.04, 0.22, 0, Math.PI * 2); ctx.fill(); }
+      else {
+        // шлем: у копа белый, у жителя - тёмный с полосой
+        ctx.fillStyle = police ? '#f4f4f4' : '#22252b'; ctx.beginPath(); ctx.arc(0, 0.04, 0.23, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = police ? '#1f3a93' : col; ctx.fillRect(-0.04, -0.17, 0.08, 0.42);
+        ctx.fillStyle = 'rgba(120,180,255,0.5)'; ctx.fillRect(-0.13, -0.17, 0.26, 0.07);
+      }
     }
     ctx.restore();
     if (d && (d.flags & 32)) burnFx(x, y);
@@ -1005,6 +1019,8 @@
       if (Math.random() < 0.25) spawn('smoke', hx, hy, 1, '#333', 0.7, 1.6, 0.34);
     } else if (st >= 2 && Math.random() < (st === 3 ? 0.2 : 0.06)) spawn('smoke', hx, hy, 1, st === 3 ? '#3a3a3a' : '#666', 0.5, 1.4, 0.26);
   }
+
+  const MOTO_JACKETS = ['#8e2b2b', '#2b5d8e', '#3d7a3d', '#6b4a2b', '#4a4f57', '#7a3d7a', '#b8732a'];
 
   // Полиция: чёрно-белая, мигалка красно-синяя; скорая: белая с красной полосой и крестом. Мигают, когда едут на вызов.
   function drawLivery(kind, fl, now) {
@@ -2199,13 +2215,13 @@
         S.me.vehicle = m.id;
         S.car = { id: m.id, x: m.x, y: m.y, a: m.a, v: m.v || 0, sx: 0, sy: 0, tp: m.tp, thr: 0, kind: m.kind || 0 };
         // тяжёлая техника: своя скорость и разгон, танк давит кирпич - как на сервере
-        const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : m.kind === 5 ? KV.VEH.moto : null;
-        if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; S.car.steer = hv.steer || 0; S.car.moto = m.kind === 5; }
+        const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : m.kind === 5 || m.kind === 6 ? KV.VEH.moto : null;
+        if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; S.car.steer = hv.steer || 0; S.car.moto = m.kind === 5 || m.kind === 6; }
         S.me.sprinting = false;
         if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
         else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
-        else if (m.kind === 5) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Он быстрый, но вас видно и можно подстрелить', 3400);
-        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти, Q/E - радио');
+        else if (m.kind === 5 || m.kind === 6) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Он быстрый, но вас видно и можно подстрелить', 3400);
+        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, пробел - ручник, F - выйти, Q/E - радио');
         updateHud(true);
         break;
       }
@@ -2330,7 +2346,7 @@
       for (const [id, x, y, a, v, st, color, fl, driver, hp, kind, tur] of m.c) {
         let c = S.vehicles.get(id);
         if (!c) { c = { id, snaps: [], rx: x, ry: y, ra: a }; S.vehicles.set(id, c); }
-        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0; c.tur = tur || 0; c.moto = kind === 5;
+        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0; c.tur = tur || 0; c.moto = kind === 5 || kind === 6;
         const last = c.snaps[c.snaps.length - 1];
         if (last && Math.hypot(last[1] - x, last[2] - y) > 12) c.snaps.length = 0;
         else if (last && m.ts > last[0]) {
@@ -2726,7 +2742,7 @@
     const v = me.vehicle ? S.vehicles.get(me.vehicle) : null;
     $('carBar').hidden = !v;
     if (v) {
-      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : v.kind === 5 ? 'Мотоцикл' : 'Машина';
+      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : v.moto ? 'Мотоцикл' : 'Машина';
       $('carFill').style.width = clamp(v.hp, 0, 100) + '%';
       $('carText').textContent = v.fl & 2 ? what + ' горит!' : what + ' ' + Math.round(v.hp) + '%';
     }
@@ -2767,8 +2783,8 @@
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
-      hint.innerHTML = me.vehicle ? (S.car && S.car.kind === 5 ? '<b>F</b> - слезть' : '<b>F</b> - выйти') + ' · <b>H</b> - гудок · <b>Q/E</b> - радио'
-        : car && car.kind === 5 ? '<b>F</b> - сесть на мотоцикл' : '<b>F</b> - сесть в машину';
+      hint.innerHTML = me.vehicle ? (S.car && S.car.moto ? '<b>F</b> - слезть' : '<b>F</b> - выйти') + ' · <b>H</b> - гудок · <b>Q/E</b> - радио'
+        : car && car.moto ? '<b>F</b> - сесть на мотоцикл' : '<b>F</b> - сесть в машину';
     } else hint.hidden = true;
     if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? `Возрождение через ${me.respawnIn.toFixed(1)} с` : 'Возрождение...';
   }
@@ -2940,7 +2956,7 @@
       g.save();
       g.translate(toX(vx), toY(vy));
       g.rotate(va);
-      g.fillStyle = v.fl & 2 ? '#ff7a1a' : v.kind === 4 ? '#556b2f' : v.kind === 3 ? '#1c2233' : CAR_COLORS[v.color] || '#888';
+      g.fillStyle = v.fl & 2 ? '#ff7a1a' : v.kind === 4 ? '#556b2f' : v.kind === 3 ? '#1c2233' : v.kind === 6 ? '#f2f2f2' : CAR_COLORS[v.color] || '#888';
       const vb = KV.boxOf(v), L = Math.max((v.moto ? 2.6 : 4) * u, vb.hl * 2 * k), Wd = Math.max((v.moto ? 1.3 : 2) * u, vb.hw * 2 * k);
       g.fillRect(-L / 2, -Wd / 2, L, Wd);
       g.strokeStyle = v.driver && !(v.fl & 4) ? '#ffffff' : 'rgba(0,0,0,0.7)';
@@ -3345,10 +3361,12 @@
       [thr, steer] = KV.steerToward(car, input.mx, input.my);
     }
     car.thr = thr;
+    // ручник - зажатый пробел (только на компьютере)
+    car.hand = input.keyDrive && k.has('Space');
     // визг шин: занос или резкий поворот на скорости
     if ((Math.hypot(car.sx, car.sy) > 3.5 || (Math.abs(steer) > 0.9 && Math.abs(car.v) > 13)) && now - S.tiresAt > 1400) { S.tiresAt = now; Sound.tires(); }
     for (const [kk, t] of S.rammed) if (now - t > 2000) S.rammed.delete(kk);
-    const res = KV.stepVehicle(S.map, car, thr, steer, dt, new Set(S.rammed.keys()));
+    const res = KV.stepVehicle(S.map, car, thr, steer, dt, new Set(S.rammed.keys()), car.hand);
     for (const kk of res.rammed) {
       S.rammed.set(kk, now);
       const x = kk % S.map.w, y = Math.floor(kk / S.map.w), t = S.map.block[kk];
@@ -3512,7 +3530,7 @@
     for (const v of S.vehicles.values()) {
       if (!(v.fl & 16) || !v.kind) continue;
       const d = Math.hypot(v.rx - S.me.x, v.ry - S.me.y);
-      if ((v.kind === 1 || v.kind === 3) && d < pd) { pd = d; pol = v; }
+      if ((v.kind === 1 || v.kind === 3 || v.kind === 6) && d < pd) { pd = d; pol = v; }
       if (v.kind === 2 && d < ad) { ad = d; amb = v; }
     }
     if (pol) want.push({ key: 'pol', name: 'siren', gain: 0.45, x: pol.rx, y: pol.ry });
@@ -3528,7 +3546,7 @@
   function updateEngines() {
     const list = [];
     // танк гудит ниже и громче
-    const tk4 = S.car && S.car.kind === 4, mt5 = S.car && S.car.kind === 5;
+    const tk4 = S.car && S.car.kind === 4, mt5 = !!(S.car && S.car.moto);
     if (S.me.vehicle && S.car) list.push({ freq: (tk4 ? 24 : mt5 ? 58 : 42) + Math.abs(S.car.v) * (tk4 ? 4 : 7) + (S.car.thr > 0 ? (mt5 ? 18 : 12) : 0), gain: (tk4 ? 0.09 : 0.05) + Math.min(0.07, Math.abs(S.car.v) * 0.005) + (S.car.thr ? 0.02 : 0) });
     else list.push(null);
     const near = [];
@@ -3541,7 +3559,7 @@
     for (let i = 0; i < 2; i++) {
       const n = near[i];
       const t4 = n && n.v.kind === 4;
-      list.push(n ? { freq: (t4 ? 24 : n.v.kind === 5 ? 54 : 38) + Math.abs(n.v.v) * (t4 ? 4 : 6), gain: (t4 ? 0.08 : 0.045) * Math.pow(1 - n.d / 24, 1.5) } : null);
+      list.push(n ? { freq: (t4 ? 24 : n.v.moto ? 54 : 38) + Math.abs(n.v.v) * (t4 ? 4 : 6), gain: (t4 ? 0.08 : 0.045) * Math.pow(1 - n.d / 24, 1.5) } : null);
     }
     Sound.engines(list);
   }
@@ -3630,7 +3648,7 @@
       else if (!interpolate(v, rt)) continue;
       if (!inView(v.rx - 3, v.ry - 3, 6, 6)) continue;
       const speed = id === S.me.vehicle && S.car ? S.car.v : v.v;
-      const fl = id === S.me.vehicle && S.car ? (v.fl & ~1) | (S.car.thr < 0 && S.car.v > 0.5 ? 1 : 0) : v.fl;
+      const fl = id === S.me.vehicle && S.car ? (v.fl & ~1) | ((S.car.thr < 0 && S.car.v > 0.5) || (S.car.hand && Math.abs(S.car.v) > 0.5) ? 1 : 0) : v.fl;
       if (v.kind === 4) {
         // танк: гусеницы бегут по ходу, башня смотрит туда, куда целится водитель
         v.trk = (v.trk || 0) + speed * dt;
@@ -3640,7 +3658,7 @@
       v.drawnAt = now; // для проверки «каждого стрелка видно»
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
-        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - (v.kind === 5 ? 1.3 : 2.4), hp: v.kind === 5 ? (v.driver === S.myId ? S.me.hp : d.hp) : 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128),
+        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - (v.moto ? 1.3 : 2.4), hp: v.moto ? (v.driver === S.myId ? S.me.hp : d.hp) : 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128),
           col: S.gang && !d.bot && v.driver !== S.myId ? ALLY_COL : undefined });
       }
     }

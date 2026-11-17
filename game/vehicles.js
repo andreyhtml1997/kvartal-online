@@ -27,7 +27,9 @@ const r3 = v => Math.round(v * 1000) / 1000;
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 const DIR_ANGLE = [0, Math.PI / 2, Math.PI, -Math.PI / 2]; // восток, юг, запад, север
 const ikey = (i, j) => i * 100 + j + 1;
-const KIND_CODE = { police: 1, amb: 2, swat: 3, tank: 4, moto: 5 }; // вид машины в снимке для браузера
+const KIND_CODE = { police: 1, amb: 2, swat: 3, tank: 4, moto: 5, pmoto: 6 }; // вид машины в снимке для браузера
+const NPC_MOTO_FALL = 9;        // м/с: удар сильнее - житель или коп слетает с мотоцикла (игроки не слетают)
+const SERVICE = { police: true, pmoto: true, swat: true, tank: true, amb: true }; // служебные: стрельба по ним - строже
 const MOTO_BLAST = { r: 3, dmg: 70, tile: 220 }; // бак мотоцикла взрывается слабее машины
 
 class Vehicles {
@@ -64,7 +66,7 @@ class Vehicles {
     if (!k) return v;
     v.hp = v.maxHp = k.hp; v.maxV = k.maxV; v.acc = k.acc; v.crush = !!k.crush;
     v.bulletK = k.bullet; v.blastK = k.blast; v.pushK = k.push;
-    v.steer = k.steer || 0; v.moto = kind === 'moto';
+    v.steer = k.steer || 0; v.moto = kind === 'moto' || kind === 'pmoto';
     return v;
   }
   // машина задела танк - взрывается (сам танк от этого взрыва не страдает)
@@ -169,6 +171,7 @@ class Vehicles {
       if (ok && !initial) for (const p of room.players.values()) if (p.alive && !p.isBot && Math.hypot(p.x - x, p.y - y) < 28) { ok = false; break; }
       if (!ok) continue;
       const v = this.create(x, y, DIR_ANGLE[d], Math.floor(Math.random() * 8), 'traffic', null);
+      if ((this.trafficN = (this.trafficN || 0) + 1) % 5 === 0) this.setKind(v, 'moto'); // каждый пятый - мотоциклист (18.11.2026)
       v.v = TRAFFIC_SPEED * 0.6;
       v.ai = { i: nx[0], j: nx[1], dir: d, wps: [{ x: b[0], y: b[1], key: 0, turn: false, approach: ikey(nx[0], nx[1]) }], wi: 0, held: 0 };
       this.plan(v);
@@ -305,7 +308,8 @@ class Vehicles {
     const credit = driverId || v.lastDriver;
     for (const k of res.rammed) this.room.destroyTile(k, credit, v.crush ? v.id : 0);
     if (v.kind === 'tank' && res.impact > 2) this.tankRam(v, res.impact, credit);
-    if (res.impact > 6) this.damage(v, (res.impact - 5) * 6 * CRASH_K, v.lastAttacker || credit);
+    if (res.impact > 6) this.damage(v, (res.impact - 5) * 6 * CRASH_K * (v.moto ? 0.5 : 1), v.lastAttacker || credit);
+    if (v.moto && v.state === 'npc' && res.impact > NPC_MOTO_FALL) this.room.npcs.riderOff(v, v.lastAttacker || 0, Math.min(90, (res.impact - 6) * 4), -2);
     if (res.impact > 3 && this.room.time - v.crashAt > 0.3) { v.crashAt = this.room.time; this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(res.impact)]); }
     // если машина всё же осталась в стене - возвращаем её на место до шага
     if (KV.carOverlapsSolid(this.map, v.x, v.y, v.a, 0.03, null) && !KV.carOverlapsSolid(this.map, bx, by, ba, 0.03, null)) {
@@ -389,6 +393,9 @@ class Vehicles {
     this.damage(a, dmg * 0.7, attackerId);
     this.damage(b, dmg * 0.7, attackerId);
     this.room.ev.cr.push([r2((a.x + b.x) / 2), r2((a.y + b.y) / 2), Math.round(impact)]);
+    if (impact > NPC_MOTO_FALL) for (const [v, o] of [[a, b], [b, a]]) {
+      if (v.moto && (v.state === 'traffic' || v.state === 'npc')) this.room.npcs.riderOff(v, o.driver || this.npcCredit(o) || 0, Math.min(90, (impact - 6) * 4), -2);
+    }
   }
 
   damage(v, amount, attackerId) {
@@ -398,7 +405,7 @@ class Vehicles {
     if (attackerId) v.lastAttacker = attackerId;
     // по машинам стрелять нельзя: звёзды розыска (кроме машин игроков и ботов - это перестрелка)
     const att = attackerId > 0 ? this.room.players.get(attackerId) : null;
-    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') this.room.npcs.crime(att, v.kind === 'police' || v.kind === 'swat' || v.kind === 'tank' || v.kind === 'amb' ? 15 : 3, 'v' + v.id); // служебные - строже (17.11.2026: было 8, у скорой 3)
+    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') this.room.npcs.crime(att, SERVICE[v.kind] ? 15 : 3, 'v' + v.id); // служебные - строже (17.11.2026: было 8, у скорой 3)
     if (v.state === 'traffic' && attackerId > 0) this.npcFlee(v, attackerId, 'shot');
     // горящую машину пули добивают: каждое попадание приближает взрыв
     if (v.burn > 0) { v.burn = Math.max(0.05, v.burn - amount / 40); return; }
@@ -426,6 +433,8 @@ class Vehicles {
     let nx = v.x - x, ny = v.y - y;
     const l = Math.hypot(nx, ny) || 1;
     nx /= l; ny /= l;
+    // житель или коп на мотоцикле: сильной волной сбрасывает (игроков - нет)
+    if (v.moto && (v.state === 'traffic' || v.state === 'npc') && s >= 5) this.room.npcs.riderOff(v, v.lastAttacker || 0, Math.min(100, s * 5), -1, nx, ny);
     const jx = nx * s, jy = ny * s;
     const cp = KV.carContactPoint(v, x, y);
     if (v.state === 'human') {
