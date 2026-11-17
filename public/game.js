@@ -3082,7 +3082,8 @@
   }
 
   $('btnCreate').addEventListener('click', () => join(randomRoom(), menuMode));
-  $('btnNewRoom').addEventListener('click', () => join(randomRoom(), menuMode));
+  // «Создать свою комнату» из приглашения - к выбору режима, а не сразу в игру
+  $('btnNewRoom').addEventListener('click', () => { $('inviteBlock').hidden = true; $('createBlock').hidden = false; setStatus(''); $('modeFfa').focus(); });
   // по приглашению: режим из ссылки (если комнату пришлось создать заново, например после перезапуска сервера)
   $('btnJoin').addEventListener('click', () => join($('inviteRoom').textContent, S.room && $('inviteRoom').textContent === S.room ? S.mode : inviteGang ? 'gang' : 'ffa'));
   $('btnCode').addEventListener('click', () => join($('codeInput').value, menuMode));

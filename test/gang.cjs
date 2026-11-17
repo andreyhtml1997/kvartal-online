@@ -25,6 +25,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const st = await a.evaluate(() => ({ gang: window.__kv.S.gang, url: location.search, board: document.getElementById('boardRoom').textContent }));
     check(st.gang && /mode=gang/.test(st.url) && /Банда/.test(st.board), `комната в режиме «Банда», режим в адресе (${st.url})`);
 
+    // по ссылке «Создать свою комнату» ведёт к выбору режима, а не сразу в игру
+    const c = await (await browser.newContext()).newPage();
+    await c.goto(BASE + '/' + st.url);
+    await c.click('#btnNewRoom');
+    const cv = await c.evaluate(() => ({ create: !document.getElementById('createBlock').hidden, invite: !document.getElementById('inviteBlock').hidden }));
+    check(cv.create && !cv.invite, '«Создать свою комнату» из приглашения открывает выбор режима');
+    await c.close();
+
     // второй - по ссылке
     const b = await (await browser.newContext({ viewport: { width: 1000, height: 640 } })).newPage();
     b.on('pageerror', e => errors.push('B: ' + e.message));
