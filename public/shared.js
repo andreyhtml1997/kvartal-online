@@ -51,7 +51,8 @@
     { id: 4, name: 'Снайперка', dmg: 95, rate: 0.7, speed: 150, spread: 0, pellets: 1, range: 75, pick: 6, box: 10, max: 30, zoom: 1.7 },
     { id: 5, name: 'Гранатомёт', grenade: true, rate: 0.8, speed: 24, spread: 0.01, pellets: 1, range: 28, blast: { r: 3.6, dmg: 110, tile: 560 }, pick: 4, box: 6, max: 16 },
     // огнемёт: короткая струя проходит сквозь людей и поджигает их (burn - сколько секунд горит), деревянное сгорает, машины загораются
-    { id: 6, name: 'Огнемёт', flame: true, dmg: 5, rate: 14, speed: 14, spread: 0.12, pellets: 1, range: 6.5, burn: 3, pick: 120, box: 150, max: 300 },
+    // по людям вдвое сильнее, чем было (17.11.2026); по машинам и клеткам - как раньше (carDmg, fireTile)
+    { id: 6, name: 'Огнемёт', flame: true, dmg: 10, carDmg: 20, fireTile: 5, rate: 14, speed: 14, spread: 0.12, pellets: 1, range: 6.5, burn: 3, pick: 120, box: 150, max: 300 },
     // бензопила: держишь - пилит в упор; режет любые стены (кроме границы карты) и машины; патроны - бензин
     { id: 7, name: 'Бензопила', melee: true, saw: true, dmg: 14, rate: 9, range: 1.5, tileDmg: 75, carDmg: 30, pick: 150, box: 150, max: 300 }
   ];
@@ -80,7 +81,8 @@
   const RAM_SPEED = 4;
   // Что давит танк: лёгкое, кирпич, деревья, брошенные машины (бетон, вода и граница карты держат)
   const CRUSHABLE = [];
-  [B.FENCE, B.CRATE, B.BENCH, B.BARREL, B.GLASS, B.BRICK, B.TREE, B.CAR].forEach(t => { CRUSHABLE[t] = true; });
+  // кирпич не давит: о кирпичную стену танк бьётся и ломает её только таранами (vehicles.tankRam) - решение владельца 17.11.2026
+  [B.FENCE, B.CRATE, B.BENCH, B.BARREL, B.GLASS, B.TREE, B.CAR].forEach(t => { CRUSHABLE[t] = true; });
 
   function isSolid(map, tx, ty) {
     if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return true;

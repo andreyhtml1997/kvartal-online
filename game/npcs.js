@@ -21,6 +21,7 @@ const NPC_ID = -100;                       // «кто стрелял» у NPC: 
 // пули полиции, спецназа, армии и вертолёта своих не задевают (иначе в перестрелке они перебивают друг друга:
 // замер 17.11 - за минуту без единого выстрела игрока гибло до 15 из 18 бойцов спецназа)
 const LAW_SHOT = new Set([NPC_ID - 1, NPC_ID - 5, NPC_ID - 6, NPC_ID - 7]);
+const BURN_DMG = 6;  // урон горящему за 0.25 с (огнемёт вдвое сильнее по людям - решение владельца 17.11.2026; было 3)
 const LAW_AIM = 3.5; // разброс у полиции, спецназа и армии шире в 3.5 раза: попадают в ~3 раза реже (замер 17.11 на 3 звёздах: полиция 26% -> 9%, спецназ 20% -> 7%, урон по стоящему игроку ~70 -> ~28 в секунду)
 const AMBIENT_NEAR = 12, AMBIENT_CAP = 45; // прохожих вокруг каждого игрока и всего
 const WALK = 1.4, RUN = 6.2, JOG = 4.3;
@@ -184,7 +185,7 @@ class Npcs {
       if (!n.alive) continue;
       if (n.burnUntil > now) {
         n.burnT += dt;
-        if (n.burnT >= 0.25) { n.burnT -= 0.25; this.damage(n, 3, n.burnBy, W.FLAMER, n.x, n.y, { silent: true }); if (!n.alive) continue; }
+        if (n.burnT >= 0.25) { n.burnT -= 0.25; this.damage(n, BURN_DMG, n.burnBy, W.FLAMER, n.x, n.y, { silent: true }); if (!n.alive) continue; }
         if (n.state !== 'flee' && n.state !== 'incar') this.flee(n, n.x + rnd(-1, 1), n.y + rnd(-1, 1), 3);
       }
       switch (n.state) {
@@ -315,7 +316,7 @@ class Npcs {
       if (Math.abs(n.x - x) > r || Math.abs(n.y - y) > r || Math.hypot(n.x - x, n.y - y) > r) continue;
       if (n.team) { this.teamPanic(x, y); continue; }
       if (n.kind === K.MEDIC && n.phase === 'heal') continue;
-      if (n.w && Math.random() < 0.5) continue;
+      if (n.w) continue; // вооружённый от выстрелов не убегает
       this.flee(n, x, y, rnd(5, 9));
     }
     if (this.team && Math.hypot(this.team.cx - x, this.team.cy - y) < r + 4) this.teamPanic(x, y);
@@ -403,7 +404,8 @@ class Npcs {
     if (LAW.has(n.kind)) { if (att && attackerId > 0 && !att.isBot && (n.state !== 'fight' || !(this.targetOf(n.target) || {}).alive)) this.fight(n, attackerId, 60); return; }
     if (n.kind === K.MEDIC) { this.flee(n, x, y, rnd(5, 8)); return; }
     if (n.state === 'fight') return;
-    if (att && attackerId > 0 && n.w && Math.random() < 0.6) this.fight(n, attackerId, 20);
+    // вооружённый не убегает: отстреливается от того, кто напал; от шальной пули - остаётся на месте
+    if (n.w) { if (att && attackerId > 0) this.fight(n, attackerId, 20); }
     else this.flee(n, att ? att.x : x, att ? att.y : y, rnd(7, 11));
     this.noise(x, y, 8);
   }
@@ -582,14 +584,15 @@ class Npcs {
     const fx = att ? att.x : v.x, fy = att ? att.y : v.y;
     if (cause === 'steal' || cause === 'fire' || cause === 'blast' || !att) {
       this.exitCar(v, drv);
-      if (att && drv.w && cause === 'steal' && Math.random() < 0.5) this.fight(drv, attackerId, 20);
+      // вооружённый не убегает: отвечает тому, кто напал, а если напавшего нет - остаётся рядом
+      if (drv.w) { if (att) this.fight(drv, attackerId, 20); else this.calm(drv); }
       else this.flee(drv, fx, fy, rnd(7, 11));
       return;
     }
-    // как в жизни: чаще бегут, вооружённые иногда отвечают
+    // безоружные чаще бегут; вооружённые не убегают никогда - давят, стреляют из окна или выходят драться
     const r = Math.random();
     let act;
-    if (drv.w) act = r < 0.3 ? 'flee' : r < 0.5 ? 'exit-flee' : r < 0.65 ? 'ram' : r < 0.82 ? 'driveby' : 'exit-fight';
+    if (drv.w) act = r < 0.3 ? 'ram' : r < 0.65 ? 'driveby' : 'exit-fight';
     else act = r < 0.45 ? 'flee' : r < 0.8 ? 'exit-flee' : 'ram';
     if (act === 'exit-flee') { this.exitCar(v, drv); this.flee(drv, fx, fy, rnd(7, 11)); return; }
     if (act === 'exit-fight') { this.exitCar(v, drv); this.fight(drv, attackerId, 25); return; }
@@ -603,7 +606,7 @@ class Npcs {
       if (!n) continue;
       this.exitCar(v, n);
       if (LAW.has(n.kind)) { const t = this.room.players.get(thiefId); if (t && !t.isBot) this.crime(t, 18); this.fight(n, thiefId, 60); }
-      else if (n.w && Math.random() < 0.5) this.fight(n, thiefId, 20);
+      else if (n.w) this.fight(n, thiefId, 20); // вооружённый угонщику отвечает
       else { const t = this.room.players.get(thiefId); this.flee(n, t ? t.x : v.x, t ? t.y : v.y, rnd(7, 11)); }
     }
     v.crew = [];

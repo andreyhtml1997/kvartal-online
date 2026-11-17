@@ -21,6 +21,8 @@ const MAX_PICKUPS = 48;
 const CAR_BULLET = 0.6;         // пули по машине - доля урона по человеку (как было до 17.11: сильнее - машины слишком хрупкие)
 const HELI_BULLET = 1;          // пули по вертолёту - доля урона по человеку (сбить: ~25 попаданий из автомата)
 const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
+const BURN_DMG = 6;             // урон горящему игроку за 0.25 с (огнемёт вдвое сильнее - 17.11.2026; было 3)
+const MED_EVERY = [20, 28];     // с: отдельные аптечки сверх обычных припасов - аптечек вдвое больше (17.11.2026)
 const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
 const REBUILD_EVERY = 9;        // тактов между кирпичами одного дома (0.3 с)
 const PICKUP_LIFE = 120;        // с
@@ -68,6 +70,7 @@ class Room {
     this.nextSupplyAt = 15;
     this.nextCrateAt = 6;
     this.nextShroomAt = 12;
+    this.nextMedAt = 8;
     this.tileFires = new Map();   // горящие деревянные клетки: k -> { until, by, next }
     this.crates = this.map.crates;
     this.initRebuild();
@@ -408,6 +411,7 @@ class Room {
   updateStamina() {
     for (const p of this.players.values()) {
       if (!p.alive || p.vehicle) continue;
+      if (this.time < p.tripUntil) { p.stamina = STAMINA.MAX; continue; } // после гриба выносливость не кончается
       const moving = this.time - p.lastMoveTime < 0.25;
       if (p.sprint && moving && p.stamina > 0) {
         p.stamina = Math.max(0, p.stamina - STAMINA.DRAIN * DT);
@@ -629,13 +633,13 @@ class Room {
     if (car) {
       b.dead = true;
       this.ev.be.push([b.id, r2(b.x + b.dx * tCar), r2(b.y + b.dy * tCar), 5]);
-      this.vehicles.damage(car, w.dmg * 4 * (car.bulletK || 1), b.owner);
+      this.vehicles.damage(car, (w.carDmg || w.dmg * 4) * (car.bulletK || 1), b.owner);
       return;
     }
     if (hitT && hitT.t <= step) {
       b.dead = true;
       this.ev.be.push([b.id, r2(b.x + b.dx * hitT.t), r2(b.y + b.dy * hitT.t), 5]);
-      if (hitT.k >= 0) this.burnTile(hitT.k, b.owner, w.dmg);
+      if (hitT.k >= 0) this.burnTile(hitT.k, b.owner, w.fireTile || w.dmg);
       return;
     }
     b.x += b.dx * step; b.y += b.dy * step; b.left -= step;
@@ -696,7 +700,7 @@ class Room {
       if (!p.alive || p.burnUntil <= this.time) continue;
       if (p.vehicle) { p.burnUntil = 0; continue; } // в машине огонь сбивается
       p.burnT += DT;
-      if (p.burnT >= 0.25) { p.burnT -= 0.25; this.damage(p, 3, p.burnBy, W.FLAMER, p.x, p.y, 0.3, true); }
+      if (p.burnT >= 0.25) { p.burnT -= 0.25; this.damage(p, BURN_DMG, p.burnBy, W.FLAMER, p.x, p.y, 0.3, true); }
     }
   }
 
@@ -1023,6 +1027,12 @@ class Room {
       const spot = this.randomPickupSpot(5);
       if (spot) this.addPickup(Math.random() < 0.55 ? PK.HEALTH : PK.ARMOR, 0, spot[0], spot[1], 50);
       this.nextSupplyAt = this.time + 10 + Math.random() * 6;
+    }
+    // аптечки отдельно от припасов: вместе их вдвое больше, чем было
+    if (this.time >= this.nextMedAt) {
+      const spot = this.randomPickupSpot(5);
+      if (spot) this.addPickup(PK.HEALTH, 0, spot[0], spot[1], 50);
+      this.nextMedAt = this.time + MED_EVERY[0] + Math.random() * (MED_EVERY[1] - MED_EVERY[0]);
     }
     // звёзды погашения розыска: всегда три на карте, подобрали - через 25-45 с новая в другом месте
     if (this.time >= this.nextStarAt) {

@@ -73,6 +73,20 @@ class Vehicles {
     return true;
   }
 
+  // Танк о кирпичную стену бьётся: не давит её, а ломает таранами - на полной скорости кирпич выдерживает ~4 удара
+  // (решение владельца 17.11.2026: сносить дома одним проездом - слишком). Бетон танк не берёт вовсе.
+  tankRam(v, impact, credit) {
+    if (v.kind !== 'tank' || !(impact > 2)) return;
+    const m = this.map, c = Math.cos(v.a), s = Math.sin(v.a);
+    const dmg = KV.BLOCKS[KV.B.BRICK].hp * 0.3 * Math.min(1, impact / 7);
+    for (let ty = Math.floor(v.y - 2.8); ty <= Math.floor(v.y + 2.8); ty++) {
+      for (let tx = Math.floor(v.x - 2.8); tx <= Math.floor(v.x + 2.8); tx++) {
+        if (tx < 0 || ty < 0 || tx >= m.w || ty >= m.h || m.block[ty * m.w + tx] !== KV.B.BRICK) continue;
+        if (KV.obbTileMTV(v.x, v.y, c, s, CAR.HL + 0.3, CAR.HW + 0.3, tx, ty)) this.room.damageTile(ty * m.w + tx, dmg, credit);
+      }
+    }
+  }
+
   // ---------- полосы и перекрёстки ----------
   entry(i, j, d) {
     const vx = this.vr[i][0], hy = this.hr[j][0];
@@ -262,6 +276,7 @@ class Vehicles {
     const res = KV.stepVehicle(this.map, v, thr, steer, dt, null);
     const credit = driverId || v.lastDriver;
     for (const k of res.rammed) this.room.destroyTile(k, credit, v.crush ? v.id : 0);
+    if (v.kind === 'tank' && res.impact > 2) this.tankRam(v, res.impact, credit);
     if (res.impact > 6) this.damage(v, (res.impact - 5) * 6 * CRASH_K, v.lastAttacker || credit);
     if (res.impact > 3 && this.room.time - v.crashAt > 0.3) { v.crashAt = this.room.time; this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(res.impact)]); }
     // если машина всё же осталась в стене - возвращаем её на место до шага
@@ -495,6 +510,16 @@ class Vehicles {
     v.driver = p.id; v.lastDriver = p.id; v.ai = null; v.brake = false;
     v.tp++; v.budget = 0; v.lastMoveTime = room.time;
     p.vehicle = v.id; p.fire = false; p.fireLatch = false; p.sprint = false;
+    // полицейская машина: дробовик с полным запасом и +50 брони; грузовик спецназа: автомат и броня до 100.
+    // Один раз на машину - иначе выходи и садись бесконечно
+    if ((v.kind === 'police' || v.kind === 'swat') && !v.looted) {
+      v.looted = true;
+      const gun = v.kind === 'police' ? KV.W.SHOTGUN : KV.W.RIFLE;
+      p.ammo[gun] = KV.WEAPONS[gun].max;
+      p.ar = v.kind === 'police' ? Math.min(100, p.ar + 50) : 100;
+      if (KV.WEAPONS[p.cur].melee) p.cur = gun; // из окна кулаками и пилой не бьют - сразу в руки ствол
+      if (!p.isBot) room.send(p, { t: 'loot', w: gun, ar: Math.round(p.ar) });
+    }
     p.x = v.x; p.y = v.y;
     if (!p.isBot) room.send(p, { t: 'car', id: v.id, x: r2(v.x), y: r2(v.y), a: r3(v.a), v: r2(v.v), tp: v.tp, kind: KIND_CODE[v.kind] || 0 });
     room.ev.en.push([v.id, p.id]);
@@ -620,6 +645,7 @@ class Vehicles {
     const s = Math.min(Number(m.s) || 0, 25);
     if (!(s > 3) || this.room.time - v.crashAt < 0.3) return;
     v.crashAt = this.room.time;
+    if (v.kind === 'tank') this.tankRam(v, s, p.id); // танк игрока таранит кирпичную стену
     if (s > 6) this.damage(v, (s - 5) * 6 * CRASH_K, v.lastAttacker || p.id);
     this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(s)]);
   }
@@ -655,6 +681,11 @@ class Vehicles {
       if (v.burn > 0) {
         v.burn -= dt;
         if (v.burn <= 0) { this.explodeVehicle(v); continue; }
+      }
+      // в скорой лечит: 3 здоровья в секунду до 100, пока сидишь
+      if (v.kind === 'amb' && v.driver) {
+        const d = room.players.get(v.driver);
+        if (d && d.alive && d.vehicle === v.id && d.hp < 100) d.hp = Math.min(100, d.hp + 3 * dt);
       }
       this.checkHits(v);
     }

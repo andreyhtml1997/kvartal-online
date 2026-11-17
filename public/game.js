@@ -1884,10 +1884,16 @@
         if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; }
         S.me.sprinting = false;
         if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
+        else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
         else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти');
         updateHud(true);
         break;
       }
+      case 'loot':
+        // полицейская машина и грузовик спецназа: ствол заряжен, броня прибавилась
+        Sound.pickup();
+        toast(`${WEAPONS[m.w].name}: полный запас, броня ${m.ar}`, 2400);
+        break;
       case 'ctp':
         if (S.car) { S.car.x = m.x; S.car.y = m.y; S.car.a = m.a; S.car.v = 0; S.car.sx = 0; S.car.sy = 0; S.car.tp = m.tp; }
         break;
@@ -2931,7 +2937,8 @@
     const f = Math.exp((rolling ? -2.2 : -5) * dt);
     me.kvx *= f; me.kvy *= f;
     // выносливость
-    if (me.sprinting && me.moving) {
+    if (S.trip) me.stamina = STAMINA.MAX; // после гриба выносливость не кончается
+    else if (me.sprinting && me.moving) {
       me.stamina = Math.max(0, me.stamina - STAMINA.DRAIN * dt);
       me.staminaT = performance.now();
       if (me.stamina <= 0) me.sprinting = false;

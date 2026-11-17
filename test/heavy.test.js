@@ -37,7 +37,7 @@ room.damage = function (t, amount, att, ...rest) {
 const shots = [];
 const spawnShot0 = room.spawnShot.bind(room);
 room.spawnShot = function (x, y, a, w, owner, veh, aimD, npcId, air) {
-  shots.push({ owner, w: w.id, air: air || 0, off: Math.abs(x - me.x) > me.view[0] || Math.abs(y - me.y) > me.view[1] });
+  shots.push({ owner, w: w.id, air: air || 0, off: Math.abs(x - me.x) > me.view[0] || Math.abs(y - me.y) > me.view[1], roof: N.underRoof(me.x, me.y) });
   return spawnShot0(x, y, a, w, owner, veh, aimD, npcId, air);
 };
 let ticks = 0;
@@ -67,6 +67,8 @@ console.log(`спецназ: грузовик ${truck ? 'приехал' : 'не
   `в бою ${onFoot}; выстрелов ${swatShots.length}, из-за края экрана ${swatShots.filter(s => s.off).length}`);
 assert.ok(truck && truck.maxHp === KV.VEH.swat.hp && siren0, 'на 3 звёздах едет бронированный грузовик спецназа с мигалками');
 assert.ok(crew0.length === 6 && crew0.every(n => n.kind === K.SWAT && n.w === W.RIFLE), 'в грузовике шестеро с автоматами');
+if (onFoot < 4) console.log('  спецназ сейчас:', [...N.list.values()].filter(n => n.kind === K.SWAT).map(n => (n.alive ? n.state : 'погиб') + ' ' + Math.hypot(n.x - me.x, n.y - me.y).toFixed(0) + 'м').join(', ') || 'никого',
+  '| грузовики:', [...room.vehicles.list.values()].filter(v => v.kind === 'swat').map(v => v.state + '/' + (v.role || '') + ' ' + Math.hypot(v.x - me.x, v.y - me.y).toFixed(0) + 'м').join(', ') || 'нет');
 assert.ok(onFoot >= 4, 'спецназ выходит и ловит игрока');
 assert.strictEqual(swatShots.filter(s => s.off).length, 0, 'спецназ не стреляет из-за края экрана');
 
@@ -102,10 +104,13 @@ const outside = [me.x, me.y];
 room.teleport(me, roofSpot[0], roofSpot[1]);
 for (const h of N.helis.values()) { h.x = me.x + 6; h.y = me.y; h.burst = 0; h.nextBurst = 0; }
 const s3 = shots.length;
-run(8);
-const roofShots = shots.slice(s3).filter(s => s.owner === NPC_ID - K.HELI).length;
-console.log(`игрок под крышей: очередей с вертолёта за 8 с ${roofShots}`);
-assert.strictEqual(roofShots, 0, 'под крышей вертолёт не стреляет');
+// полиция стреляет по дому, и крыша может рухнуть - считаем только выстрелы, пока она цела
+let roofT = 0;
+run(8, () => { if (N.underRoof(me.x, me.y)) roofT += DT; });
+const heliHere = shots.slice(s3).filter(s => s.owner === NPC_ID - K.HELI);
+const roofShots = heliHere.filter(s => s.roof).length;
+console.log(`игрок под крышей ${roofT.toFixed(1)} с из 8: выстрелов с вертолёта, пока крыша цела, ${roofShots} (всего ${heliHere.length})`);
+assert.ok(roofT >= 2 && roofShots === 0, 'под крышей вертолёт не стреляет');
 room.teleport(me, outside[0], outside[1]);
 
 // 4. сбить вертолёт пулями: целишься в него - стреляешь вверх, стены не мешают
@@ -204,25 +209,35 @@ const stepCars = n => { for (let i = 0; i < n; i++) { R.time += DT; V.update(DT)
   V.remove(t);
 }
 
-// 8. танк давит кирпич и лёгкое, бетон держит; обычная машина в кирпичную стену упирается
+// 8. танк давит заборы; о кирпичную стену бьётся - она ломается только после нескольких таранов; бетон держит;
+//    обычная машина в кирпичную стену упирается
 {
-  for (let y = 50; y <= 70; y++) { R.map.block[at(48, y)] = B.BRICK; R.map.hp[at(48, y)] = 110; R.map.block[at(52, y)] = B.FENCE; R.map.hp[at(52, y)] = 28; }
-  for (let y = 50; y <= 70; y++) { R.map.block[at(70, y)] = B.CONCRETE; R.map.hp[at(70, y)] = 240; }
-  const t = V.setKind(V.create(42, 60, 0, 6, 'parked', null), 'tank');
-  for (let i = 0; i < 6 * KV.TICK_RATE; i++) { R.time += DT; V.physics(t, 1, 0, DT, 0); R.updatePending(); }
-  const brickGone = R.map.block[at(48, 60)] === B.NONE, fenceGone = R.map.block[at(52, 60)] === B.NONE;
-  console.log(`танк: кирпич ${brickGone ? 'раздавлен' : 'цел'}, забор ${fenceGone ? 'раздавлен' : 'цел'}, остановился у бетона на x=${t.x.toFixed(1)}, ` +
-    `бетон ${R.map.block[at(70, 60)] === B.CONCRETE ? 'цел' : 'снесён'}, скорость до ${t.maxV} м/с`);
-  assert.ok(brickGone && fenceGone, 'танк давит кирпич и заборы');
-  assert.ok(t.x > 55 && t.x < 70 - KV.CAR.HL + 0.2 && R.map.block[at(70, 60)] === B.CONCRETE, 'бетон танк не берёт');
+  for (let y = 50; y <= 70; y++) { R.map.block[at(46, y)] = B.FENCE; R.map.hp[at(46, y)] = 28; R.map.block[at(54, y)] = B.BRICK; R.map.hp[at(54, y)] = 110; R.map.dmg[at(54, y)] = 0; }
+  const t = V.setKind(V.create(40, 60, 0, 6, 'parked', null), 'tank');
+  const drive = (tk, thr, sec) => { for (let i = 0; i < sec * KV.TICK_RATE; i++) { R.time += DT; V.physics(tk, thr, 0, DT, 0); R.updatePending(); } };
+  drive(t, 1, 3);
+  const fenceGone = R.map.block[at(46, 60)] === B.NONE;
+  const hp1 = R.map.block[at(54, 60)] === B.BRICK ? R.map.hp[at(54, 60)] : 0;
+  let rams = 1;
+  while (R.map.block[at(54, 60)] === B.BRICK && rams < 12) { drive(t, -1, 1.2); drive(t, 1, 1.6); rams++; }
+  console.log(`танк: забор ${fenceGone ? 'раздавлен' : 'цел'}; кирпич после первого удара ${hp1.toFixed(0)}/110, сломан за ${rams} таранов; скорость до ${t.maxV} м/с`);
+  assert.ok(fenceGone, 'танк давит заборы');
+  assert.ok(hp1 > 0 && hp1 < 110, 'о кирпич танк бьётся: стена цела, но повреждена');
+  assert.ok(rams >= 3 && rams <= 8 && R.map.block[at(54, 60)] !== B.BRICK, 'кирпич танк ломает только несколькими таранами');
   V.remove(t);
+  for (let y = 50; y <= 70; y++) { R.map.block[at(70, y)] = B.CONCRETE; R.map.hp[at(70, y)] = 240; }
+  const t2 = V.setKind(V.create(63, 60, 0, 6, 'parked', null), 'tank');
+  for (let r = 0; r < 4; r++) { drive(t2, 1, 1.6); drive(t2, -1, 1.2); }
+  console.log(`танк о бетон: 4 тарана, бетон ${R.map.block[at(70, 60)] === B.CONCRETE && R.map.hp[at(70, 60)] === 240 ? 'цел' : 'повреждён'}`);
+  assert.ok(R.map.block[at(70, 60)] === B.CONCRETE && R.map.hp[at(70, 60)] === 240, 'бетон танк не берёт');
+  V.remove(t2);
   for (let y = 50; y <= 70; y++) { R.map.block[at(48, y)] = B.BRICK; R.map.hp[at(48, y)] = 110; }
   const c = V.create(42, 60, 0, 1, 'parked', null);
   for (let i = 0; i < 3 * KV.TICK_RATE; i++) { R.time += DT; V.physics(c, 1, 0, DT, 0); }
   console.log(`обычная машина у кирпичной стены: x=${c.x.toFixed(1)}, стена ${R.map.block[at(48, 60)] === B.BRICK ? 'цела' : 'снесена'}`);
   assert.ok(c.x < 48 - KV.CAR.HL + 0.1 && R.map.block[at(48, 60)] === B.BRICK, 'обычная машина кирпич не проламывает');
   V.remove(c);
-  for (let y = 50; y <= 70; y++) for (const x of [48, 52, 70]) R.map.block[at(x, y)] = B.NONE;
+  for (let y = 50; y <= 70; y++) for (const x of [46, 48, 54, 70]) R.map.block[at(x, y)] = B.NONE;
 }
 
 // 9. броня: пули почти не берут танк, грузовик спецназа держит втрое лучше машины; танку нужно 5 ракет
