@@ -20,6 +20,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(800);
     const kv = (f, arg) => pc.evaluate(f, arg);
 
+    // в комнате 10 персонажей: боты угоняют и взрывают машины - на время проверок машин выключаем их
+    await kv(() => window.__kv.send({ t: 'bots', on: false }));
     // рывок: с Shift бежит быстрее, выносливость тратится
     await kv(() => window.__kv.send({ t: 'dbg', god: 1 }));
     const s0 = await kv(() => ({ x: window.__kv.S.me.x, y: window.__kv.S.me.y, st: window.__kv.S.me.stamina }));
@@ -132,7 +134,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const phoneId = await ph.evaluate(() => window.__kv.S.myId);
     const seen = await kv(id => window.__kv.S.humans.some(h => h[0] === id), phoneId);
     check(seen, 'компьютер видит игрока с телефона на карте');
-    // режим без ботов: выключаем под шестерёнкой - боты исчезают, включаем - возвращаются
+    // режим без ботов: включаем обратно, потом выключаем под шестерёнкой - боты исчезают, включаем - возвращаются
+    await kv(() => window.__kv.send({ t: 'bots', on: true }));
+    await sleep(1300);
     await pc.click('#btnMenu');
     await pc.click('#btnBots');
     await sleep(1200);
@@ -214,6 +218,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const stillMoving = await ph.evaluate(() => !!window.__kv.input.move);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     check(curAfter === target.i && stillMoving, `на ходу (палец на джойстике) касание оружия сверху меняет его (${curNow} -> ${curAfter})`);
+    await kv(() => window.__kv.send({ t: 'bots', on: false })); // дальше снова машины - без ботов
     await ph.evaluate(() => window.__kv.send({ t: 'dbg', nearCar: 1 }));
     await sleep(900);
     const boxW = await ph.locator('#btnWeapon').boundingBox();

@@ -39,9 +39,18 @@
         <div class="bar car" id="carBar" aria-label="Машина" hidden><span id="carFill"></span><b id="carText">Машина</b></div>
         <ol id="miniBoard" aria-label="Счёт игроков"></ol>
       </div>
+      <div class="hud-btns">
       <button type="button" id="btnMenu" class="gear" aria-label="Настройки" aria-expanded="false" aria-controls="gearMenu">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.4 7.4 0 0 0-1.7-1L14.4 2.4A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5c.1.2.4.3.6.2l2.5-1c.5.4 1.1.7 1.7 1l.4 2.7c0 .2.2.4.5.4h4c.3 0 .5-.2.5-.4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
       </button>
+      <!-- голосовой чат: наушники - подключиться/выйти, микрофон - выключить/включить свой голос -->
+      <button type="button" id="btnVoice" class="gear" aria-label="Подключиться к голосовому чату" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 3a8 8 0 0 0-8 8v6a3 3 0 0 0 3 3h1v-7H6v-2a6 6 0 0 1 12 0v2h-2v7h1a3 3 0 0 0 3-3v-6a8 8 0 0 0-8-8z"/></svg>
+      </button>
+      <button type="button" id="btnMic" class="gear" hidden aria-label="Выключить микрофон" aria-pressed="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/><path class="slash" stroke="currentColor" stroke-width="2.4" d="M4 4l16 16"/></svg>
+      </button>
+      </div>
     </div>
     <ul id="feed" aria-live="polite"></ul>
 
@@ -144,7 +153,7 @@
       <details class="help">
         <summary>Как играть</summary>
         <ul>
-          <li><b>Компьютер:</b> WASD - ходить, Shift - рывок, мышь - целиться, левая кнопка - стрелять (держите - очередь), 1-8 или колесо - оружие, F - сесть в машину и выйти, H - гудок, M - карта, Tab - счёт.</li>
+          <li><b>Компьютер:</b> WASD - ходить, Shift - рывок, мышь - целиться, левая кнопка - стрелять (держите - очередь), 1-8 или колесо - оружие, F - сесть в машину и выйти, H - гудок, V - микрофон в голосовом чате, M - карта, Tab - счёт.</li>
           <li><b>В машине:</b> W/S - газ и тормоз, A/D - руль, мышь - стрелять из окна.</li>
           <li><b>Телефон:</b> левый палец - ходить и рулить, правый палец - целиться и стрелять (держите - стреляет без остановки, короткое касание - один выстрел). Кнопки справа: рывок, сесть в машину, гудок.</li>
           <li>Оружие и патроны появляются на карте примерно раз в 15 секунд, ещё больше - в ящиках. Ящики появляются снова.</li>

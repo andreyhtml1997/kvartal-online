@@ -260,6 +260,7 @@
         return on;
       },
       loops,
+      ctx() { return ac; },
       loadedCount() { return Object.keys(buf).length; },
       shot(w, x, y) {
         if (SHOT[w] && sample(SHOT[w], { x, y, gain: w === W.RIFLE ? 0.5 : w === W.PISTOL ? 0.65 : 0.8 })) return;
@@ -1102,6 +1103,177 @@
   }
 
   // ======================================================================
+  // Голосовой чат: микрофон -> 16 кГц -> IMA ADPCM 4 бита (~8 КБ/с, только пока говорите) -> сервер -> все, кто в голосе.
+  // Микрофон включается сам, когда слышит голос (порог подстраивается под шум комнаты).
+  // ======================================================================
+  const Voice = (() => {
+    const RATE = 16000, FRAME = 640; // кадр 40 мс
+    const STEP = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+      130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411,
+      1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487,
+      12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767];
+    const IDX = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
+    let on = false, muted = false, talking = false, talkUntil = 0, starting = false;
+    let stream = null, srcNode = null, proc = null, sink = null, vout = null;
+    let floor = -60, pos = 0, acc = 0, cnt = 0, fill = 0, prev = null;
+    const frame = new Float32Array(FRAME);
+    const enc = { pred: 0, idx: 0 };
+    const peers = new Map();       // номер игрока -> время, с которого играть его следующий кадр
+    const stats = { sent: 0, got: 0 };
+
+    function encode(pcm) {
+      const out = new Uint8Array(4 + FRAME / 2);
+      out[0] = 1; out[1] = enc.pred & 255; out[2] = (enc.pred >> 8) & 255; out[3] = enc.idx;
+      let pred = enc.pred, idx = enc.idx;
+      for (let i = 0; i < FRAME; i++) {
+        const s = Math.max(-32768, Math.min(32767, Math.round(pcm[i] * 32767)));
+        let step = STEP[idx], diff = s - pred, code = 0;
+        if (diff < 0) { code = 8; diff = -diff; }
+        let dq = step >> 3;
+        if (diff >= step) { code |= 4; diff -= step; dq += step; }
+        step >>= 1;
+        if (diff >= step) { code |= 2; diff -= step; dq += step; }
+        step >>= 1;
+        if (diff >= step) { code |= 1; dq += step; }
+        pred += code & 8 ? -dq : dq;
+        if (pred > 32767) pred = 32767; else if (pred < -32768) pred = -32768;
+        idx += IDX[code]; if (idx < 0) idx = 0; else if (idx > 88) idx = 88;
+        if (i & 1) out[4 + (i >> 1)] |= code << 4; else out[4 + (i >> 1)] = code;
+      }
+      enc.pred = pred; enc.idx = idx;
+      return out;
+    }
+    function decode(b, o) {
+      let pred = b[o] | (b[o + 1] << 8);
+      if (pred > 32767) pred -= 65536;
+      let idx = Math.min(88, b[o + 2]);
+      const n = Math.min(FRAME, (b.length - o - 3) * 2);
+      const out = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const byte = b[o + 3 + (i >> 1)];
+        const code = i & 1 ? byte >> 4 : byte & 15;
+        const step = STEP[idx];
+        let dq = step >> 3;
+        if (code & 4) dq += step;
+        if (code & 2) dq += step >> 1;
+        if (code & 1) dq += step >> 2;
+        pred += code & 8 ? -dq : dq;
+        if (pred > 32767) pred = 32767; else if (pred < -32768) pred = -32768;
+        idx += IDX[code]; if (idx < 0) idx = 0; else if (idx > 88) idx = 88;
+        out[i] = pred / 32768;
+      }
+      return out;
+    }
+    function send(pkt) {
+      if (S.ws && S.ws.readyState === 1 && S.ws.bufferedAmount < 64e3) { S.ws.send(pkt.buffer); stats.sent++; }
+    }
+    function onFrame(f) {
+      let sum = 0;
+      for (let i = 0; i < FRAME; i++) sum += f[i] * f[i];
+      const db = 10 * Math.log10(sum / FRAME + 1e-10);
+      floor = db < floor ? db : Math.min(-30, floor + 0.03); // уровень тишины подстраивается под комнату
+      const now = performance.now();
+      if (db > Math.max(-50, floor + 14)) talkUntil = now + 350;
+      const was = talking;
+      talking = !muted && now < talkUntil;
+      if (!talking) { prev = f.slice(); return; }
+      if (!was && prev) send(encode(prev)); // начало слова не обрезается
+      send(encode(f));
+    }
+    function onAudio(e) {
+      const inp = e.inputBuffer.getChannelData(0);
+      const ratio = e.inputBuffer.sampleRate / RATE;
+      // понижение частоты усреднением - заодно глушит высокие частоты
+      for (let i = 0; i < inp.length; i++) {
+        acc += inp[i]; cnt++; pos += 1;
+        if (pos >= ratio) {
+          pos -= ratio;
+          frame[fill++] = acc / cnt; acc = 0; cnt = 0;
+          if (fill === FRAME) { fill = 0; onFrame(frame); }
+        }
+      }
+    }
+    function sync() {
+      const bv = $('btnVoice'), bm = $('btnMic');
+      bv.classList.toggle('on', on);
+      bv.setAttribute('aria-pressed', on ? 'true' : 'false');
+      bv.setAttribute('aria-label', on ? 'Выйти из голосового чата' : 'Подключиться к голосовому чату');
+      bv.title = on ? 'Голосовой чат: подключены (нажмите, чтобы выйти)' : 'Подключиться к голосовому чату';
+      bm.hidden = !on;
+      bm.classList.toggle('muted', muted);
+      bm.setAttribute('aria-pressed', muted ? 'false' : 'true');
+      bm.setAttribute('aria-label', muted ? 'Включить микрофон' : 'Выключить микрофон');
+      bm.title = muted ? 'Микрофон выключен (V)' : 'Микрофон включён (V)';
+    }
+    async function start() {
+      if (on || starting) return;
+      Sound.init();
+      const ac = Sound.ctx();
+      if (!ac) { toast('Звук в этом браузере недоступен'); return; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Браузер не даёт доступ к микрофону', 3000); return; }
+      starting = true;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      } catch (_) {
+        starting = false;
+        toast('Нет доступа к микрофону - разрешите его в браузере', 3500);
+        return;
+      }
+      starting = false;
+      if (!S.inGame) { stream.getTracks().forEach(t => t.stop()); stream = null; return; }
+      srcNode = ac.createMediaStreamSource(stream);
+      proc = ac.createScriptProcessor(2048, 1, 1);
+      proc.onaudioprocess = onAudio;
+      sink = ac.createGain(); sink.gain.value = 0;
+      srcNode.connect(proc); proc.connect(sink); sink.connect(ac.destination);
+      if (!vout) { vout = ac.createGain(); vout.gain.value = 1.4; vout.connect(ac.destination); }
+      on = true; muted = false; talking = false; talkUntil = 0; floor = -60; fill = 0; acc = 0; cnt = 0; pos = 0; prev = null;
+      if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'voice', on: true }));
+      sync();
+      toast('Вы в голосовом чате: говорите - вас слышат все подключённые', 3000);
+    }
+    function stop(silent) {
+      if (!on) return;
+      on = false; talking = false; peers.clear();
+      try { if (srcNode) srcNode.disconnect(); if (proc) { proc.onaudioprocess = null; proc.disconnect(); } if (sink) sink.disconnect(); } catch (_) {}
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = srcNode = proc = sink = null;
+      if (!silent && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'voice', on: false }));
+      sync();
+    }
+    function toggleMute() {
+      if (!on) return;
+      muted = !muted;
+      if (muted) talking = false;
+      sync();
+      toast(muted ? 'Микрофон выключен' : 'Микрофон включён', 1500);
+    }
+    // кадр от другого игрока: [1][номер игрока 2 байта][pred 2 байта][idx][данные]
+    function onPacket(ab) {
+      const ac = Sound.ctx();
+      if (!on || !ac || !vout) return;
+      const b = new Uint8Array(ab);
+      if (b[0] !== 1 || b.length < 8) return;
+      const id = b[1] | (b[2] << 8);
+      const pcm = decode(b, 3);
+      // до частоты звуковой карты - линейно (буферы 16 кГц не везде поддерживаются)
+      const sr = ac.sampleRate, n = Math.floor(pcm.length * sr / RATE);
+      const out = ac.createBuffer(1, n, sr), d = out.getChannelData(0), k = RATE / sr;
+      for (let i = 0; i < n; i++) { const p = i * k, j = p | 0, f = p - j; d[i] = pcm[j] * (1 - f) + (pcm[j + 1] !== undefined ? pcm[j + 1] : pcm[j]) * f; }
+      const src = ac.createBufferSource();
+      src.buffer = out;
+      src.connect(vout);
+      const now = ac.currentTime;
+      let next = peers.get(id) || 0;
+      if (next < now + 0.02 || next > now + 0.6) next = now + 0.12; // небольшой запас против рывков сети
+      src.start(next);
+      peers.set(id, next + n / sr);
+      stats.got++;
+    }
+    return { start, stop, toggleMute, onPacket, isOn: () => on, talking: () => on && talking, stats, sync };
+  })();
+
+  // ======================================================================
   // Ввод
   // ======================================================================
   const input = {
@@ -1124,6 +1296,7 @@
     else if (e.code === 'KeyF') carAction();
     else if (e.code === 'KeyH') horn();
     else if (e.code === 'KeyM') showBig(!S.bigOpen);
+    else if (e.code === 'KeyV' && !e.repeat) Voice.toggleMute();
     else if (e.code === 'Tab') { e.preventDefault(); showBoard(true); }
     else if (e.code === 'Escape') { showBoard(false); showBig(false); showGear(false); }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
@@ -1374,10 +1547,12 @@
     const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
     let ws;
     try { ws = new WebSocket(url); } catch (_) { setStatus('Не удалось подключиться'); return; }
+    ws.binaryType = 'arraybuffer';
     S.ws = ws;
     let welcomed = false;
     ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: S.room, name: S.name }));
     ws.onmessage = ev => {
+      if (typeof ev.data !== 'string') { Voice.onPacket(ev.data); return; } // голос других игроков
       let m;
       try { m = JSON.parse(ev.data); } catch (_) { return; }
       if (m.t === 'welcome') welcomed = true;
@@ -1385,6 +1560,7 @@
     };
     ws.onclose = () => {
       if (S.ws !== ws) return;
+      Voice.stop(true);
       S.ws = null;
       if (S.leaving) return;
       if (S.inGame) { $('lost').hidden = false; return; }
@@ -1642,6 +1818,7 @@
     if (m.tf) for (const k of m.tf) S.tileFires.set(k, now + 9000);
     if (m.tfx) for (const k of m.tfx) S.tileFires.delete(k);
     if (m.fl) for (const [x, y, a] of m.fl) S.npcs.push({ x, y, a, t0: now, walk: 0, color: ['#8e44ad', '#16a085', '#d35400', '#7f8c8d'][Math.floor(Math.random() * 4)] });
+    if (m.vc) for (const [id, on] of m.vc) if (id !== S.myId) feed(`${nameOf(id)} ${on ? 'подключился к голосовому чату' : 'вышел из голосового чата'}`);
     if (m.bo) for (const [on, who] of m.bo) {
       S.botsOn = !!on;
       syncBotsBtn();
@@ -1759,6 +1936,7 @@
     $('btnHorn').hidden = !(isTouch && me.alive && me.vehicle);
     btnSprint.hidden = !(isTouch && me.alive && !me.vehicle && (input.move || input.sprintBtn));
     $('btnLeave').hidden = !(me.alive && me.vehicle);
+    $('btnMic').classList.toggle('talk', Voice.talking());
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
@@ -1837,6 +2015,8 @@
     try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована - отправьте её друзьям'); }
     catch (_) { prompt('Скопируйте ссылку и отправьте друзьям:', url); }
   });
+  $('btnVoice').addEventListener('click', () => { if (Voice.isOn()) Voice.stop(); else Voice.start(); });
+  $('btnMic').addEventListener('click', () => Voice.toggleMute());
   $('btnExit').addEventListener('click', leave);
   $('btnLostMenu').addEventListener('click', leave);
   $('btnReconnect').addEventListener('click', () => { const room = S.room; leave(); join(room); });
@@ -2086,6 +2266,7 @@
 
   function leave() {
     S.leaving = true;
+    Voice.stop(true);
     if (S.ws) { try { S.ws.close(); } catch (_) {} }
     S.ws = null;
     S.inGame = false;
@@ -2452,7 +2633,7 @@
       drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle);
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
-        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - 2.4, hp: 100, me: v.driver === S.myId });
+        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - 2.4, hp: 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
       }
     }
 
@@ -2487,7 +2668,7 @@
       else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
       if (p.flags & 32) burnFx(p.rx, p.ry);
       if (p.flags & 64) tripHalo(p.rx, p.ry, now);
-      tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false });
+      tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false, talk: !!(p.flags & 128) });
     }
     for (const n of S.npcs) {
       const age = (now - n.t0) / 1000;
@@ -2516,7 +2697,7 @@
       if (now < S.me.rollUntil) drawRoller(S.me.x, S.me.y, S.me.rollAng, mp ? mp.color : '#fff', 1 - (S.me.rollUntil - now) / (KV.ROLL.TIME * 1000), true);
       else drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.cur === W.SAW ? S.me.saw : S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving);
       if (mp && (mp.flags & 32)) burnFx(S.me.x, S.me.y);
-      tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true });
+      tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true, talk: Voice.talking() });
     }
     if (tk > 0) drawPhantoms(now, dt, tk);
     drawBullets(now);
@@ -2539,6 +2720,7 @@
       ctx.strokeText(t.name, sx, sy);
       ctx.fillStyle = t.me ? '#ffd23f' : t.bot ? '#d6dbe3' : '#ffffff';
       ctx.fillText(t.name, sx, sy);
+      if (t.talk) drawSpeaker(sx - ctx.measureText(t.name).width / 2 - 11 * dpr * hud, sy - 7 * dpr * hud, dpr * hud, now);
       if (t.hp < 100) {
         const bw = 34 * dpr, bh = 4 * dpr;
         ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - bw / 2, sy + 2 * dpr, bw, bh);
@@ -2702,6 +2884,24 @@
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  // значок динамика слева от имени говорящего, с бегущими волнами
+  function drawSpeaker(x, y, k, now) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = '#5fe39a';
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.lineWidth = 2 * k;
+    ctx.beginPath();
+    ctx.moveTo(-7 * k, -3 * k); ctx.lineTo(-3 * k, -3 * k); ctx.lineTo(2 * k, -7 * k); ctx.lineTo(2 * k, 7 * k); ctx.lineTo(-3 * k, 3 * k); ctx.lineTo(-7 * k, 3 * k);
+    ctx.closePath(); ctx.stroke(); ctx.fill();
+    ctx.lineWidth = 1.8 * k;
+    for (let i = 0; i < 2; i++) {
+      ctx.strokeStyle = `rgba(95,227,154,${0.45 + 0.55 * Math.abs(Math.sin(now / 160 + i))})`;
+      ctx.beginPath(); ctx.arc(2 * k, 0, (5 + i * 4) * k, -0.8, 0.8); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // перекрестие прицела на экране; в режиме «под палец» крупнее, чтобы было видно вокруг пальца
   function drawCrosshair(sx, sy, rCss) {
     const r = rCss * dpr;
@@ -2764,7 +2964,7 @@
   }
 
   // для автотестов
-  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar, Sound };
+  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar, Sound, Voice };
 
   resize();
   requestAnimationFrame(frame);

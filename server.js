@@ -70,7 +70,9 @@ wss.on('connection', ws => {
   ws.msgWindow = Date.now();
   ws.on('pong', () => { ws.alive = true; });
 
-  ws.on('message', raw => {
+  ws.on('message', (raw, isBinary) => {
+    // голосовой чат: двоичные кадры идут мимо JSON, у них своё ограничение частоты (room.onVoice)
+    if (isBinary) { if (ws.room && ws.player) ws.room.onVoice(ws.player, raw); return; }
     const now = Date.now();
     if (now - ws.msgWindow > 1000) { ws.msgWindow = now; ws.msgCount = 0; }
     if (++ws.msgCount > MAX_MSGS_PER_SEC) return;

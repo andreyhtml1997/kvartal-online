@@ -36,7 +36,7 @@ function emptyEvents() {
   // vx - взорвалась, fl - водитель убегает; tf/tfx - деревянная клетка загорелась/погасла
   return {
     b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
-    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: []
+    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: []
   };
 }
 
@@ -85,7 +85,8 @@ class Room {
       ammo: KV.emptyAmmo(), cur: 0, fire: false, fireLatch: false, latchAt: 0, nextShot: 0,
       kills: 0, deaths: 0, prot: 0, tp: 0, budget: 0, lastMoveTime: 0, shotAt: -10,
       view: [24, 16], ai: null, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprint: false, hornAt: -10,
-      rollUntil: 0, rollVx: 0, rollVy: 0, burnUntil: 0, burnBy: 0, burnT: 0, tripUntil: 0
+      rollUntil: 0, rollVx: 0, rollVy: 0, burnUntil: 0, burnBy: 0, burnT: 0, tripUntil: 0,
+      voice: false, talkUntil: 0, vWin: 0, vCount: 0
     };
     this.players.set(p.id, p);
     return p;
@@ -221,6 +222,15 @@ class Room {
         break;
       }
       case 'crash': if (p.vehicle) this.vehicles.onCrash(p, msg); break;
+      case 'voice': {
+        // подключился к голосовому чату или вышел из него
+        const on = !!msg.on;
+        if (on === p.voice || p.isBot) break;
+        p.voice = on;
+        if (!on) p.talkUntil = 0;
+        this.ev.vc.push([p.id, on ? 1 : 0]);
+        break;
+      }
       case 'dbg':
         // только для автотестов на своём компьютере: на хостинге переменная KV_DEBUG не задана
         if (process.env.KV_DEBUG !== '1') break;
@@ -240,18 +250,22 @@ class Room {
           }
         }
         if (msg.nearCar) {
-          let best = null, bd = 1e9;
-          for (const v of this.vehicles.list.values()) {
-            if (v.dead || v.state !== 'parked') continue;
-            const d = Math.hypot(v.x - p.x, v.y - p.y);
-            if (d < bd) { bd = d; best = v; }
-          }
-          if (best) {
-            const c = Math.cos(best.a), s = Math.sin(best.a);
+          // к ближайшей целой стоящей машине, у которой свободна дверь; если таких нет - ставим машину на дорогу
+          const cars = [...this.vehicles.list.values()].filter(v => !v.dead && v.state === 'parked' && v.burn <= 0 && v.hp > CAR.HP * 0.5)
+            .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
+          let done = false;
+          for (const v of cars.slice(0, 12)) {
+            const c = Math.cos(v.a), s = Math.sin(v.a);
             for (const side of [1, -1]) {
-              const x = best.x + s * side * (CAR.HW + 0.7), y = best.y - c * side * (CAR.HW + 0.7);
-              if (KV.circleFree(this.map, x, y, KV.PLAYER_R)) { this.teleport(p, x, y); break; }
+              const x = v.x + s * side * (CAR.HW + 0.7), y = v.y - c * side * (CAR.HW + 0.7);
+              if (KV.circleFree(this.map, x, y, KV.PLAYER_R) && !this.vehicles.personBlocked(x, y, null)) { this.teleport(p, x, y); done = true; break; }
             }
+            if (done) break;
+          }
+          if (!done) {
+            const r = this.map.roads.x[1] || this.map.roads.x[0];
+            const x = r[0] + 2, y = 30 + Math.random() * 60;
+            if (!KV.carHitsHard(this.map, x, y, Math.PI / 2, 0.05)) { this.vehicles.create(x, y, Math.PI / 2, 5, 'parked', null); this.teleport(p, x + CAR.HW + 0.7, y); }
           }
         }
         if (Array.isArray(msg.tp)) {
@@ -293,6 +307,24 @@ class Room {
       p.x = x; p.y = y; p.budget -= dist;
     } else {
       this.teleport(p, p.x, p.y);
+    }
+  }
+
+  // Голос: кадр от игрока (двоичный, ~320 байт на 40 мс) - всем остальным, кто в голосовом чате.
+  // Сервер звук не разбирает, только пересылает с номером говорящего и помечает, что тот говорит.
+  onVoice(p, buf) {
+    if (!p.voice || p.isBot || !Buffer.isBuffer(buf) || buf.length < 6 || buf.length > 600 || buf[0] !== 1) return;
+    const now = Date.now();
+    if (now - p.vWin > 1000) { p.vWin = now; p.vCount = 0; }
+    if (++p.vCount > 40) return; // не больше 40 кадров в секунду
+    p.talkUntil = this.time + 0.35;
+    const out = Buffer.allocUnsafe(buf.length + 2);
+    out[0] = 1;
+    out.writeUInt16LE(p.id & 0xffff, 1);
+    buf.copy(out, 3, 1);
+    for (const o of this.players.values()) {
+      if (o === p || !o.voice || !o.ws || o.ws.readyState !== 1 || o.ws.bufferedAmount > 256e3) continue;
+      o.ws.send(out, { binary: true });
     }
   }
 
@@ -865,7 +897,8 @@ class Room {
       for (const o of all) {
         if (o !== p && (Math.abs(o.x - p.x) > vw || Math.abs(o.y - p.y) > vh)) continue;
         const flags = (o.alive ? 1 : 0) | (this.time < o.prot ? 2 : 0) | (this.time - o.shotAt < 0.15 ? 4 : 0) | (o.vehicle ? 8 : 0) |
-          (this.time < o.rollUntil ? 16 : 0) | (this.time < o.burnUntil ? 32 : 0) | (this.time < o.tripUntil ? 64 : 0);
+          (this.time < o.rollUntil ? 16 : 0) | (this.time < o.burnUntil ? 32 : 0) | (this.time < o.tripUntil ? 64 : 0) |
+          (this.time < o.talkUntil ? 128 : 0) | (o.voice ? 256 : 0);
         list.push([o.id, r2(o.x), r2(o.y), r3(o.a), flags, o.cur, Math.max(0, Math.ceil(o.hp))]);
       }
       const c = [];
