@@ -68,10 +68,19 @@
   // DRAG - сопротивление, STEER - рад/с на скорости, HP - прочность, FIRE - сколько секунд горит до взрыва
   const CAR = { HL: 2.0, HW: 0.95, MAX: 21, REV: 7, ACCEL: 14, BRAKE: 26, ROLL: 3, DRAG: 0.3, STEER: 3.0, HP: 220, FIRE: 4, ENTER: 1.7 };
   const CAR_BLAST = { r: 4, dmg: 95, tile: 320 };
+  // Тяжёлая техника (габариты как у машины): прочность, предел скорости, разгон, какая доля урона от пуль
+  // и взрывов доходит, насколько сдвигает взрывная волна; танк давит кирпич и лёгкое даже стоя
+  const VEH = {
+    swat: { hp: 650, maxV: 17, acc: 10, bullet: 0.35, blast: 1, push: 0.6 },
+    tank: { hp: 800, maxV: 9, acc: 6, bullet: 0.05, blast: 1, push: 0.15, crush: true }
+  };
   // Лёгкие препятствия, которые машина на скорости проламывает
   const RAMMABLE = [];
   [B.FENCE, B.CRATE, B.BENCH, B.BARREL, B.GLASS].forEach(t => { RAMMABLE[t] = true; });
   const RAM_SPEED = 4;
+  // Что давит танк: лёгкое, кирпич, деревья, брошенные машины (бетон, вода и граница карты держат)
+  const CRUSHABLE = [];
+  [B.FENCE, B.CRATE, B.BENCH, B.BARREL, B.GLASS, B.BRICK, B.TREE, B.CAR].forEach(t => { CRUSHABLE[t] = true; });
 
   function isSolid(map, tx, ty) {
     if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return true;
@@ -234,27 +243,27 @@
   }
 
   // Стоит ли машина на твёрдом (не проламываемом) препятствии; shrink - допуск
-  function carHitsHard(map, x, y, a, shrink) {
+  function carHitsHard(map, x, y, a, shrink, crush) {
     const c = Math.cos(a), s = Math.sin(a);
     const hl = CAR.HL - shrink, hw = CAR.HW - shrink;
     for (let ty = Math.floor(y - 2.3); ty <= Math.floor(y + 2.3); ty++) {
       for (let tx = Math.floor(x - 2.3); tx <= Math.floor(x + 2.3); tx++) {
         const t = carSolidAt(map, tx, ty);
-        if (!t || RAMMABLE[t]) continue;
+        if (!t || RAMMABLE[t] || (crush && CRUSHABLE[t])) continue;
         if (obbTileMTV(x, y, c, s, hl, hw, tx, ty)) return true;
       }
     }
     return false;
   }
 
-  // Клетки с лёгкими препятствиями под машиной
-  function carOverlapTiles(map, x, y, a, shrink, out) {
+  // Клетки с лёгкими препятствиями под машиной (crush - танк: и всё, что он давит)
+  function carOverlapTiles(map, x, y, a, shrink, out, crush) {
     const c = Math.cos(a), s = Math.sin(a);
     const hl = CAR.HL - shrink, hw = CAR.HW - shrink;
     for (let ty = Math.floor(y - 2.3); ty <= Math.floor(y + 2.3); ty++) {
       for (let tx = Math.floor(x - 2.3); tx <= Math.floor(x + 2.3); tx++) {
         const t = carSolidAt(map, tx, ty);
-        if (!t || !RAMMABLE[t] || t === B.BORDER) continue;
+        if (!t || t === B.BORDER || !(RAMMABLE[t] || (crush && CRUSHABLE[t]))) continue;
         if (obbTileMTV(x, y, c, s, hl, hw, tx, ty)) out.push(ty * map.w + tx);
       }
     }
@@ -284,11 +293,13 @@
   function stepVehicle(map, car, throttle, steer, dt, ignore) {
     const px = car.x, py = car.y, pa = car.a;
     if (!car.w) car.w = 0;
-    if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : CAR.ACCEL) * throttle * dt;
-    else if (throttle < 0) car.v += (car.v > 0 ? CAR.BRAKE : CAR.ACCEL * 0.6) * throttle * dt;
+    // у тяжёлой техники свой разгон и предел скорости
+    const acc = car.acc || CAR.ACCEL, maxV = car.maxV || CAR.MAX;
+    if (throttle > 0) car.v += (car.v < 0 ? CAR.BRAKE : acc) * throttle * dt;
+    else if (throttle < 0) car.v += (car.v > 0 ? CAR.BRAKE : acc * 0.6) * throttle * dt;
     else { const r = CAR.ROLL * dt; car.v = Math.abs(car.v) <= r ? 0 : car.v - Math.sign(car.v) * r; }
     car.v -= car.v * CAR.DRAG * dt;
-    if (car.v > CAR.MAX) car.v = CAR.MAX;
+    if (car.v > maxV) car.v = maxV;
     if (car.v < -CAR.REV) car.v = -CAR.REV;
     const sf = car.v / (Math.abs(car.v) + 2.5);
     car.a += (steer * CAR.STEER * sf + car.w) * dt;
@@ -378,6 +389,8 @@
           if (ign.has(k)) continue;
           const mtv = obbTileMTV(car.x, car.y, c, s, CAR.HL, CAR.HW, tx, ty);
           if (!mtv) continue;
+          // танк давит своё и стоя; обычная машина проламывает лёгкое на скорости
+          if (car.crush && CRUSHABLE[t]) { ign.add(k); res.rammed.push(k); car.v *= 0.97; continue; }
           if (RAMMABLE[t] && Math.abs(car.v) > RAM_SPEED) { ign.add(k); res.rammed.push(k); car.v *= 0.9; continue; }
           car.x += mtv[0]; car.y += mtv[1];
           const ml = Math.hypot(mtv[0], mtv[1]) || 1;
@@ -447,7 +460,7 @@
 
   return {
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
-    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
+    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, VEH, RAMMABLE, CRUSHABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
     obbTileMTV, obbObbMTV, pushOutOBB, pushOutSafe, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     applyImpulse, carContactPoint, carCollide,

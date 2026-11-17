@@ -44,7 +44,8 @@
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
-    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0
+    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0,
+    helis: new Map(), tanks: [], helisMM: [] // вертолёты рядом; танки и вертолёты на радаре
   };
 
   function makePlayer(id) {
@@ -60,8 +61,12 @@
     return isNew;
   }
   // жители (стрелок с отрицательным номером: -100 - вид)
-  const NPC_NAMES = ['Прохожий', 'Полиция', 'Врач', 'Футболист', 'Тренер'];
-  const NPC_KILL = ['Вас убил прохожий', 'Вас убила полиция', 'Вас убил врач', 'Вас убил футболист', 'Вас убил тренер'];
+  const NPC_NAMES = ['Прохожий', 'Полиция', 'Врач', 'Футболист', 'Тренер', 'Спецназ', 'Армия', 'Вертолёт'];
+  const NPC_KILL = ['Вас убил прохожий', 'Вас убила полиция', 'Вас убил врач', 'Вас убил футболист', 'Вас убил тренер',
+    'Вас убил спецназ', 'Вас убила армия', 'Вас расстрелял вертолёт'];
+  const LAW_KIND = k => k === 1 || k === 5 || k === 6; // полиция, спецназ, армия
+  // чем стреляем сейчас: в танке - пушка (как гранатомёт), иначе оружие в руках
+  const curWeapon = () => (S.me.vehicle && S.car && S.car.kind === 4 ? WEAPONS[W.LAUNCHER] : WEAPONS[S.me.cur]);
   const nameOf = id => (id <= -100 ? NPC_NAMES[-100 - id] || 'Житель' : (S.players.get(id) || {}).name || '???');
 
   // ======================================================================
@@ -121,6 +126,7 @@
         noise = ac.createBuffer(1, len, ac.sampleRate);
         const d = noise.getChannelData(0);
         for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        buf.rotor = makeRotor();
         for (let i = 0; i < 3; i++) {
           const osc = ac.createOscillator();
           osc.type = 'sawtooth';
@@ -181,6 +187,21 @@
       osc.start(t);
       osc.stop(t + o.dur + 0.05);
     }
+    // винт вертолёта: глухие удары лопастей 16 раз в секунду поверх низкого шума (синтез, без файла).
+    // 2 с: ровно 32 удара и 96 периодов гула - петля без шва
+    function makeRotor() {
+      const sr = ac.sampleRate, len = sr * 2, b = ac.createBuffer(1, len, sr), d = b.getChannelData(0);
+      let lp = 0, lp2 = 0, peak = 1e-6;
+      for (let i = 0; i < len; i++) {
+        const t = i / sr, ph = (t * 16) % 1, pulse = Math.exp(-ph * 9);
+        lp += 0.06 * ((Math.random() * 2 - 1) - lp);
+        lp2 += 0.02 * (lp - lp2);
+        const v = lp * (0.35 + 1.4 * pulse) + Math.sin(2 * Math.PI * 48 * t) * pulse * 0.55 + lp2 * 0.8;
+        d[i] = v; if (Math.abs(v) > peak) peak = Math.abs(v);
+      }
+      for (let i = 0; i < len; i++) d[i] = (d[i] / peak) * 0.9;
+      return b;
+    }
     // ---------- записанные звуки (CC0, public/sounds): грузятся после входа в игру, пока не загрузились - играет синтез ----------
     const FILES = ['pain1', 'pain2', 'pain3', 'pain4', 'pain5', 'pain6', 'pain7', 'pain8', 'pain9', 'death1', 'death2', 'death3',
       'horn', 'pistol', 'rifle', 'shotgun', 'sniper', 'launcher', 'explosion', 'glass', 'metal', 'flamer', 'saw_idle', 'saw_cut',
@@ -233,7 +254,7 @@
         if (!l) {
           const src = ac.createBufferSource();
           src.buffer = b; src.loop = true;
-          if (b.duration > 0.4 && o.name !== 'engine' && o.name !== 'siren') { src.loopStart = 0.05; src.loopEnd = b.duration - 0.03; }
+          if (b.duration > 0.4 && o.name !== 'engine' && o.name !== 'siren' && o.name !== 'rotor') { src.loopStart = 0.05; src.loopEnd = b.duration - 0.03; }
           const g = ac.createGain();
           g.gain.value = 0;
           src.connect(g); g.connect(master);
@@ -264,7 +285,7 @@
       },
       loops,
       ctx() { return ac; },
-      loadedCount() { return Object.keys(buf).length; },
+      loadedCount() { return FILES.filter(f => buf[f.replace(/\.wav$/, '')]).length; }, // только файлы (винт - синтез)
       shot(w, x, y) {
         if (SHOT[w] && sample(SHOT[w], { x, y, gain: w === W.RIFLE ? 0.5 : w === W.PISTOL ? 0.65 : 0.8 })) return;
         if (w === W.PISTOL) { burst({ dur: 0.12, freq: 1800, q: 0.8, gain: 0.45, x, y, sweep: 600 }); tone({ freq: 170, dur: 0.06, gain: 0.2, type: 'triangle', slide: 60, x, y }); }
@@ -274,6 +295,11 @@
         else if (w === W.LAUNCHER) burst({ dur: 0.25, freq: 600, q: 0.7, gain: 0.5, x, y, type: 'lowpass', sweep: 150 });
       },
       boom(x, y) { if (sample('explosion', { x, y, gain: 1, rate: 0.85 + Math.random() * 0.25 })) return; burst({ dur: 1.1, freq: 900, q: 0.5, gain: 1, type: 'lowpass', sweep: 60, x, y, attack: 0.005 }); tone({ freq: 70, dur: 0.6, gain: 0.6, slide: 30, x, y }); },
+      // пушка танка: гранатомёт ниже и громче, с раскатом
+      cannon(x, y) {
+        if (sample('launcher', { x, y, gain: 1, rate: 0.62 })) { sample('explosion', { x, y, gain: 0.3, rate: 1.7 }); return; }
+        burst({ dur: 0.45, freq: 420, q: 0.6, gain: 0.8, type: 'lowpass', sweep: 80, x, y }); tone({ freq: 60, dur: 0.3, gain: 0.5, slide: 30, x, y });
+      },
       glass(x, y) { if (sample('glass', { x, y, gain: 0.6 })) return; burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
       wood(x, y) { burst({ dur: 0.18, freq: 700, q: 1.5, gain: 0.35, x, y }); },
       brick(x, y) { burst({ dur: 0.45, freq: 420, q: 0.6, gain: 0.45, type: 'lowpass', x, y, sweep: 120 }); },
@@ -841,7 +867,8 @@
   }
 
   // Машина: a - курс (0 - на восток). Модель рисуется носом вверх, поэтому поворот a + 90°.
-  function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine, kind, now) {
+  function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine, kind, now, v) {
+    if (kind === 4) { drawTank(x, y, a, st, fl, mine, now || performance.now(), v && v.tr !== undefined ? v.tr : a, v ? v.trk || 0 : 0); return; }
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(a + Math.PI / 2);
@@ -896,6 +923,18 @@
       ctx.fillRect(-0.1, -0.35, 0.2, 0.6); ctx.fillRect(-0.3, -0.15, 0.6, 0.2);
       ctx.fillStyle = on ? (ph ? '#ff2a2a' : '#2a6bff') : '#7a7a7a'; ctx.fillRect(-0.55, -1.05, 1.1, 0.22);
       ctx.fillStyle = '#1b2631'; roundRect(ctx, -0.76, -1.6, 1.52, 0.42, 0.12); ctx.fill();
+    } else if (kind === 3) {
+      // грузовик спецназа: тёмный бронированный кузов-будка, узкое стекло кабины, мигалка, надпись на крыше
+      ctx.fillStyle = '#1b2130'; roundRect(ctx, -0.95, -2.0, 1.9, 4.0, 0.28); ctx.fill();
+      ctx.fillStyle = '#273049'; roundRect(ctx, -0.86, -0.95, 1.72, 2.85, 0.12); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 0.05;
+      ctx.beginPath(); for (let i = 1; i < 5; i++) { ctx.moveTo(-0.86, -0.95 + i * 0.57); ctx.lineTo(0.86, -0.95 + i * 0.57); } ctx.stroke();
+      ctx.fillStyle = '#0b0e14'; roundRect(ctx, -0.74, -1.72, 1.48, 0.5, 0.1); ctx.fill();
+      ctx.fillStyle = on ? (ph ? '#ff2a2a' : '#2a6bff') : '#3a3a48'; ctx.fillRect(-0.6, -1.12, 1.2, 0.16);
+      ctx.save(); ctx.rotate(-Math.PI / 2);
+      ctx.fillStyle = 'rgba(235,240,250,0.85)'; ctx.font = '800 0.62px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('SWAT', -0.45, 0);
+      ctx.restore();
     }
     if (on) {
       // свет мигалки на асфальте
@@ -905,10 +944,155 @@
     }
   }
 
-  // Житель: прохожий, полицейский (тёмно-синяя форма и фуражка), врач (белый с красным крестом), футболист, тренер
+  // Танк: гусеницы с бегущими траками, оливковый корпус, круглая башня с длинным стволом (поворачивается отдельно)
+  function drawTank(x, y, a, st, fl, mine, now, tur, trk) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a + Math.PI / 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    roundRect(ctx, -0.92, -1.82, 2.1, 4.05, 0.2); ctx.fill();
+    for (const gx of [-1.06, 0.63]) {
+      ctx.fillStyle = '#23261c'; roundRect(ctx, gx, -2.05, 0.43, 4.1, 0.16); ctx.fill();
+      ctx.fillStyle = 'rgba(130,130,105,0.55)';
+      const off = ((-trk % 0.36) + 0.36) % 0.36;
+      for (let yy = -2.0 + off; yy < 1.98; yy += 0.36) ctx.fillRect(gx + 0.04, yy, 0.35, 0.08);
+    }
+    ctx.fillStyle = '#556b2f'; roundRect(ctx, -0.66, -1.95, 1.32, 3.9, 0.18); ctx.fill();
+    ctx.fillStyle = 'rgba(40,52,18,0.55)';
+    ctx.beginPath(); ctx.ellipse(-0.3, -1.2, 0.25, 0.4, 0.4, 0, Math.PI * 2); ctx.ellipse(0.32, 0.35, 0.22, 0.45, -0.3, 0, Math.PI * 2); ctx.ellipse(-0.25, 1.0, 0.24, 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#4a5e28'; ctx.fillRect(-0.66, 1.2, 1.32, 0.72);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.05;
+    ctx.beginPath(); for (let i = 0; i < 3; i++) { ctx.moveTo(-0.5, 1.36 + i * 0.2); ctx.lineTo(0.5, 1.36 + i * 0.2); } ctx.stroke();
+    if (st) { ctx.fillStyle = `rgba(0,0,0,${0.15 * st})`; roundRect(ctx, -0.66, -1.95, 1.32, 3.9, 0.18); ctx.fill(); }
+    if (mine) { ctx.strokeStyle = 'rgba(255,210,63,0.9)'; ctx.lineWidth = 0.08; roundRect(ctx, -1.06, -2.05, 2.12, 4.1, 0.2); ctx.stroke(); }
+    ctx.restore();
+    // башня: в мировых координатах, ствол по направлению tur
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(tur);
+    ctx.fillStyle = '#2f3a19'; ctx.fillRect(0.4, -0.11, 2.3, 0.22);
+    ctx.fillStyle = '#1d2410'; ctx.fillRect(2.45, -0.15, 0.3, 0.3);
+    ctx.fillStyle = '#62783a'; ctx.beginPath(); ctx.ellipse(-0.05, 0, 0.82, 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.05; ctx.stroke();
+    ctx.fillStyle = '#3e4f22'; ctx.beginPath(); ctx.arc(-0.3, 0.22, 0.24, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c0392b'; ctx.beginPath();
+    for (let i = 0; i < 5; i++) { const q = -Math.PI / 2 + i * 4 * Math.PI / 5; ctx.lineTo(0.15 + Math.cos(q) * 0.17, -0.3 + Math.sin(q) * 0.17); }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    const hx = x + Math.cos(a) * 1.2, hy = y + Math.sin(a) * 1.2;
+    if (fl & 2) {
+      if (Math.random() < 0.8) spawn('fire', hx + (Math.random() - 0.5) * 1.4, hy + (Math.random() - 0.5) * 1.4, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 0.8, 0.45, 0.45);
+      if (Math.random() < 0.35) spawn('smoke', hx, hy, 1, '#333', 0.8, 1.8, 0.45);
+    } else if (st >= 2 && Math.random() < (st === 3 ? 0.25 : 0.08)) spawn('smoke', hx, hy, 1, st === 3 ? '#3a3a3a' : '#666', 0.6, 1.6, 0.3);
+  }
+
+  // Полицейский вертолёт: тень на земле (тем дальше, чем выше), луч прожектора на того, кого ловит, корпус и винт.
+  // Сбитый крутится, дымит и падает (тень сходится с корпусом).
+  function drawHelis(now, dt, rt, inView, tags) {
+    for (const [id, h] of S.helis) {
+      if (Date.now() - h.seen > 1200) { S.helis.delete(id); continue; }
+      if (!interpolate(h, rt)) continue;
+      h.rot = (h.rot || 0) + dt * 30;
+      const fall = h.fallAt ? Math.min(1, (now - h.fallAt) / 1400) : 0;
+      const alt = 1 - fall, sc = 0.85 + 0.25 * alt;
+      if (!inView(h.rx - 10, h.ry - 10, 20, 20)) continue;
+      h.drawnAt = now;
+      if (!(h.fl & 3)) {
+        // прожектор: пятно света на цели и слабый луч к нему
+        let lx = h.rx + Math.cos(h.ra) * 4, ly = h.ry + Math.sin(h.ra) * 4;
+        if (h.target === S.myId && S.me.alive) { lx = S.me.x; ly = S.me.y; }
+        else { const p = S.players.get(h.target); if (p && !p.hidden && now - (p.drawnAt || 0) < 300) { lx = p.rx; ly = p.ry; } }
+        h.lx = h.lx === undefined ? lx : h.lx + (lx - h.lx) * Math.min(1, dt * 4);
+        h.ly = h.ly === undefined ? ly : h.ly + (ly - h.ly) * Math.min(1, dt * 4);
+        const sx = h.lx + Math.sin(now / 700) * 0.4, sy = h.ly + Math.cos(now / 900) * 0.4;
+        const dd = Math.hypot(sx - h.rx, sy - h.ry);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        if (dd > 0.8) {
+          ctx.save();
+          ctx.translate(h.rx, h.ry); ctx.rotate(Math.atan2(sy - h.ry, sx - h.rx));
+          const gb = ctx.createLinearGradient(0, 0, dd, 0);
+          gb.addColorStop(0, 'rgba(255,250,215,0.10)'); gb.addColorStop(1, 'rgba(255,250,215,0.03)');
+          ctx.fillStyle = gb;
+          ctx.beginPath(); ctx.moveTo(0.6, -0.25); ctx.lineTo(dd, -2.2); ctx.lineTo(dd, 2.2); ctx.lineTo(0.6, 0.25); ctx.closePath(); ctx.fill();
+          ctx.restore();
+        }
+        const gs = ctx.createRadialGradient(sx, sy, 0, sx, sy, 2.6);
+        gs.addColorStop(0, 'rgba(255,250,215,0.38)'); gs.addColorStop(0.6, 'rgba(255,250,215,0.15)'); gs.addColorStop(1, 'rgba(255,250,215,0)');
+        ctx.fillStyle = gs;
+        ctx.beginPath(); ctx.arc(sx, sy, 2.6, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      // тень
+      const so = 1.9 * alt;
+      ctx.save();
+      ctx.translate(h.rx + so * 0.75, h.ry + so);
+      ctx.rotate(h.ra);
+      ctx.scale(sc * 0.95, sc * 0.95);
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath(); ctx.ellipse(0.25, 0, 1.45, 0.72, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(-3.3, -0.14, 2.8, 0.28); ctx.fillRect(-2.75, -0.6, 0.22, 1.2);
+      ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.beginPath(); ctx.arc(0.05, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      // корпус
+      ctx.save();
+      ctx.translate(h.rx, h.ry);
+      ctx.rotate(h.ra);
+      ctx.scale(sc, sc);
+      heliBody(now, h.rot);
+      ctx.restore();
+      if (h.fl & 1) {
+        if (Math.random() < 0.85) spawn('smoke', h.rx, h.ry, 1, '#2e2e2e', 1, 1.8, 0.55);
+        if (Math.random() < 0.6) spawn('fire', h.rx + (Math.random() - 0.5), h.ry + (Math.random() - 0.5), 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 1, 0.45, 0.45);
+      } else if (h.hp < 50 && Math.random() < 0.3) spawn('smoke', h.rx - Math.cos(h.ra) * 0.8, h.ry - Math.sin(h.ra) * 0.8, 1, '#555', 0.8, 1.4, 0.35);
+      if (h.hp < 100 && !(h.fl & 1)) tags.push({ name: '', bot: true, x: h.rx, y: h.ry - 2.6, hp: h.hp, me: false });
+    }
+  }
+  function heliBody(now, rot) {
+    // хвостовая балка, стабилизатор, хвостовой винт
+    ctx.fillStyle = '#18213d';
+    ctx.fillRect(-3.3, -0.14, 2.8, 0.28);
+    ctx.fillRect(-2.75, -0.6, 0.22, 1.2);
+    ctx.strokeStyle = 'rgba(30,30,30,0.7)'; ctx.lineWidth = 0.08;
+    const tr = rot * 2.2;
+    ctx.beginPath(); ctx.moveTo(-3.25 + Math.cos(tr) * 0.1, Math.sin(tr) * 0.45); ctx.lineTo(-3.25 - Math.cos(tr) * 0.1, -Math.sin(tr) * 0.45); ctx.stroke();
+    // полозья
+    ctx.strokeStyle = '#15171c'; ctx.lineWidth = 0.1;
+    ctx.beginPath(); ctx.moveTo(-0.9, -0.78); ctx.lineTo(1.25, -0.78); ctx.moveTo(-0.9, 0.78); ctx.lineTo(1.25, 0.78); ctx.stroke();
+    // корпус: тёмно-синий, белая крыша, кабина со стеклом спереди
+    ctx.fillStyle = '#1f2d57'; ctx.beginPath(); ctx.ellipse(0.25, 0, 1.45, 0.72, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e9edf4'; ctx.beginPath(); ctx.ellipse(-0.15, 0, 0.8, 0.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(120,180,225,0.9)'; ctx.beginPath(); ctx.ellipse(1.05, 0, 0.5, 0.52, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.ellipse(1.15, -0.18, 0.18, 0.12, 0, 0, Math.PI * 2); ctx.fill();
+    // огни: красный на хвосте, сине-красный маячок
+    const ph = Math.floor(now / 180) % 2;
+    ctx.fillStyle = ph ? '#ff2a2a' : '#5a1010'; ctx.beginPath(); ctx.arc(-3.3, 0, 0.12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = ph ? '#2a6bff' : '#ff2a2a'; ctx.fillRect(-0.55, -0.12, 0.3, 0.24);
+    // несущий винт: размытый диск и две лопасти
+    ctx.fillStyle = 'rgba(25,25,30,0.16)'; ctx.beginPath(); ctx.arc(0.05, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,20,25,0.75)'; ctx.lineWidth = 0.16; ctx.lineCap = 'round';
+    for (let i = 0; i < 2; i++) {
+      const q = rot + i * Math.PI / 2;
+      ctx.beginPath(); ctx.moveTo(0.05 + Math.cos(q) * 2.5, Math.sin(q) * 2.5); ctx.lineTo(0.05 - Math.cos(q) * 2.5, -Math.sin(q) * 2.5); ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = '#0d0f14'; ctx.beginPath(); ctx.arc(0.05, 0, 0.18, 0, Math.PI * 2); ctx.fill();
+  }
+  // стреляет ли игрок из танка (для звука пушки)
+  function inTank(id) {
+    if (!(id > 0)) return false;
+    for (const v of S.vehicles.values()) if (v.driver === id && v.kind === 4) return true;
+    return false;
+  }
+
+  // Житель: прохожий, полицейский (тёмно-синяя форма и фуражка), врач (белый с красным крестом), футболист, тренер,
+  // спецназ (чёрная форма и шлем), армия (олива и каска)
   const PED_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#d35400', '#16a085', '#7f8c8d', '#f39c12', '#2c3e50', '#e84393', '#6c5ce7', '#00b894'];
   const KIT_COLORS = ['#e74c3c', '#3498db', '#f1c40f', '#2ecc71'];
-  function pedColor(n) { return n.kind === 1 ? '#1f3a93' : n.kind === 2 ? '#f2f2f2' : n.kind === 3 ? KIT_COLORS[n.look % 4] : n.kind === 4 ? '#2d3436' : PED_COLORS[n.look % PED_COLORS.length]; }
+  function pedColor(n) {
+    return n.kind === 1 ? '#1f3a93' : n.kind === 2 ? '#f2f2f2' : n.kind === 3 ? KIT_COLORS[n.look % 4] : n.kind === 4 ? '#2d3436'
+      : n.kind === 5 ? '#20242c' : n.kind === 6 ? '#4b5d23' : PED_COLORS[n.look % PED_COLORS.length];
+  }
   function drawPed(n, now) {
     const col = pedColor(n);
     if (!(n.fl & 1)) {
@@ -934,6 +1118,8 @@
     if (n.kind === 1) { ctx.fillStyle = '#0d1b4f'; ctx.beginPath(); ctx.arc(0.02, 0, 0.21, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffd23f'; ctx.fillRect(0.12, -0.04, 0.07, 0.08); }
     else if (n.kind === 2) { ctx.fillStyle = '#e53935'; ctx.fillRect(-0.2, -0.05, 0.16, 0.1); ctx.fillRect(-0.17, -0.12, 0.1, 0.24); }
     else if (n.kind === 3) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(-0.16, -0.36, 0.06, 0.72); }
+    else if (n.kind === 5) { ctx.fillStyle = '#0c0d10'; ctx.beginPath(); ctx.arc(0.02, 0, 0.23, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = 'rgba(120,180,255,0.55)'; ctx.fillRect(0.1, -0.1, 0.07, 0.2); }
+    else if (n.kind === 6) { ctx.fillStyle = '#3d4d1c'; ctx.beginPath(); ctx.arc(0.02, 0, 0.24, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#26300f'; ctx.lineWidth = 0.04; ctx.stroke(); }
     ctx.restore();
     // нападает - красное кольцо, горит - огонь
     if (n.fl & 16) { ctx.strokeStyle = 'rgba(255,50,50,0.75)'; ctx.lineWidth = 0.06; ctx.beginPath(); ctx.arc(n.rx, n.ry, 0.7, 0, Math.PI * 2); ctx.stroke(); }
@@ -1469,9 +1655,9 @@
       if (d > range || d < 0.3) continue;
       out.push({ ang: Math.atan2(dy, dx), d, p });
     }
-    // мирных автоприцел не выбирает - только полицию и тех, кто напал
+    // мирных автоприцел не выбирает - только полицию, спецназ, армию и тех, кто напал
     for (const n of S.peds.values()) {
-      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
+      if (!(n.fl & 1) || !(LAW_KIND(n.kind) || (n.fl & 16))) continue;
       const dx = n.rx - S.me.x, dy = n.ry - S.me.y, d = Math.hypot(dx, dy);
       if (d > range || d < 0.3) continue;
       out.push({ ang: Math.atan2(dy, dx), d, p: n });
@@ -1480,11 +1666,19 @@
   }
   // ближайший видимый противник (когда палец на стике почти не отведён)
   function autoAim() {
-    const w = WEAPONS[S.me.cur];
+    const w = curWeapon();
     let best = null;
     for (const t of targetsInRange(w.melee ? 2.5 : Math.min(w.range, 18))) {
       if (!losClient(S.me.x, S.me.y, t.p.rx, t.p.ry)) continue;
       if (!best || t.d < best.d) best = t;
+    }
+    // по земле стрелять не в кого - вертолёт (летит над домами, стены не мешают)
+    if (!best && !w.melee && !w.flame) {
+      for (const h of S.helis.values()) {
+        if (h.fl & 1 || !h.drawnAt) continue;
+        const d = Math.hypot(h.rx - S.me.x, h.ry - S.me.y);
+        if (d < Math.min(w.range, 18) && (!best || d < best.d)) best = { d, p: { rx: h.rx, ry: h.ry } };
+      }
     }
     return best ? { x: best.p.rx, y: best.p.ry } : null;
   }
@@ -1497,9 +1691,18 @@
       if (d < bd) { bd = d; best = { x: p.rx, y: p.ry }; }
     }
     for (const n of S.peds.values()) {
-      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
+      if (!(n.fl & 1) || !(LAW_KIND(n.kind) || (n.fl & 16))) continue;
       const d = Math.hypot(n.rx - tx, n.ry - ty);
       if (d < bd) { bd = d; best = { x: n.rx, y: n.ry }; }
+    }
+    // вертолёт большой - прицел липнет к нему издалека
+    if (!best) {
+      let hd = 2.2;
+      for (const h of S.helis.values()) {
+        if (h.fl & 1) continue;
+        const d = Math.hypot(h.rx - tx, h.ry - ty);
+        if (d < hd) { hd = d; best = { x: h.rx, y: h.ry }; }
+      }
     }
     return best;
   }
@@ -1540,7 +1743,7 @@
       tripAim(tk);
       input.fire = input.mouseDown;
     } else if (input.aim) {
-      const w = WEAPONS[S.me.cur];
+      const w = curWeapon();
       const maxAim = w.melee ? 2.5 : Math.min(w.range || 10, S.zoomR * 0.95);
       let tx = null, ty = null;
       // потянул палец от кнопки атаки - прицел туда; чем дальше, тем дальше точка (граната летит до неё)
@@ -1551,7 +1754,7 @@
       S.aimTarget = null;
       if (input.aim.dragged) {
         // стик сопоставлен с экраном: край круга - край экрана в ту же сторону, прицел свободно ходит по всему экрану
-        if (WEAPONS[S.me.cur].melee) { tx = S.me.x + (dx / l) * maxAim; ty = S.me.y + (dy / l) * maxAim; }
+        if (w.melee) { tx = S.me.x + (dx / l) * maxAim; ty = S.me.y + (dy / l) * maxAim; }
         else {
           const sx = (S.me.x * S.view.tp + S.view.ox) / dpr + (dx / l) * n * (cw / 2);
           const sy = (S.me.y * S.view.tp + S.view.oy) / dpr + (dy / l) * n * (ch / 2);
@@ -1665,13 +1868,18 @@
       case 'welcome': onWelcome(m); break;
       case 'err': S.leaving = true; setStatus(m.text); if (S.ws) S.ws.close(); break;
       case 'tp': onTeleport(m); break;
-      case 'car':
+      case 'car': {
         S.me.vehicle = m.id;
-        S.car = { id: m.id, x: m.x, y: m.y, a: m.a, v: m.v || 0, sx: 0, sy: 0, tp: m.tp, thr: 0 };
+        S.car = { id: m.id, x: m.x, y: m.y, a: m.a, v: m.v || 0, sx: 0, sy: 0, tp: m.tp, thr: 0, kind: m.kind || 0 };
+        // тяжёлая техника: своя скорость и разгон, танк давит кирпич - как на сервере
+        const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : null;
+        if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; }
         S.me.sprinting = false;
-        toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти');
+        if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
+        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти');
         updateHud(true);
         break;
+      }
       case 'ctp':
         if (S.car) { S.car.x = m.x; S.car.y = m.y; S.car.a = m.a; S.car.v = 0; S.car.sx = 0; S.car.sy = 0; S.car.tp = m.tp; }
         break;
@@ -1690,7 +1898,7 @@
         for (const [id, k, d, civ, cops] of m.l) { const p = S.players.get(id); if (p) { p.kills = k; p.deaths = d; p.civ = civ || 0; p.cops = cops || 0; } }
         if (!$('board').hidden) renderBoard();
         break;
-      case 'mm': S.pings = m.l; S.humans = m.h || []; S.police = m.pc || []; S.ambs = m.am || []; break;
+      case 'mm': S.pings = m.l; S.humans = m.h || []; S.police = m.pc || []; S.ambs = m.am || []; S.tanks = m.tk || []; S.helisMM = m.hl || []; break;
     }
   }
 
@@ -1713,6 +1921,7 @@
     S.particles.length = 0; S.effects.length = 0; S.decals.length = 0; S.hitMarks.length = 0; S.npcs.length = 0; S.blasts.length = 0; S.pings = [];
     S.tileFires.clear();
     S.peds.clear(); S.police = []; S.ambs = []; S.stars = 0; syncStars(false);
+    S.helis.clear(); S.tanks = []; S.helisMM = [];
     endTrip();
     resetMe();
     S.clockOff = null;
@@ -1766,10 +1975,11 @@
       if (p.snaps.length > 12) p.snaps.shift();
     }
     if (m.c) {
-      for (const [id, x, y, a, v, st, color, fl, driver, hp, kind] of m.c) {
+      // прочность - в процентах; вид: 1 полиция, 2 скорая, 3 спецназ, 4 танк; tur - куда смотрит башня танка
+      for (const [id, x, y, a, v, st, color, fl, driver, hp, kind, tur] of m.c) {
         let c = S.vehicles.get(id);
         if (!c) { c = { id, snaps: [], rx: x, ry: y, ra: a }; S.vehicles.set(id, c); }
-        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0;
+        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0; c.tur = tur || 0;
         const last = c.snaps[c.snaps.length - 1];
         if (last && Math.hypot(last[1] - x, last[2] - y) > 12) c.snaps.length = 0;
         else if (last && m.ts > last[0]) {
@@ -1791,9 +2001,24 @@
       n.snaps.push([m.ts, x, y, a]);
       if (n.snaps.length > 10) n.snaps.shift();
     }
+    // вертолёты: [номер, x, y, курс, прочность %, флаги (1 падает, 2 улетает, 4 стреляет), кого ловит]
+    if (m.h) for (const [id, x, y, a, hp, fl, target] of m.h) {
+      let h = S.helis.get(id);
+      if (!h) { h = { id, snaps: [], rx: x, ry: y, ra: a, rot: Math.random() * 6 }; S.helis.set(id, h); }
+      h.hp = hp; h.fl = fl; h.target = target; h.seen = now;
+      if ((fl & 1) && !h.fallAt) h.fallAt = performance.now();
+      const last = h.snaps[h.snaps.length - 1];
+      if (last && Math.hypot(last[1] - x, last[2] - y) > 25) h.snaps.length = 0;
+      h.snaps.push([m.ts, x, y, a]);
+      if (h.snaps.length > 10) h.snaps.shift();
+    }
     const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh, stars] = m.me;
     if ((stars || 0) !== S.stars) {
-      if ((stars || 0) > S.stars) { toast(stars === 1 ? 'Вас разыскивает полиция!' : `Розыск: ${'★'.repeat(stars)}`, 2200); Sound.siren1(); }
+      if ((stars || 0) > S.stars) {
+        const who = ['', '', '', ' - едет спецназ!', ' - летит вертолёт!', ' - армия и танки!'][stars] || '';
+        toast(stars === 1 ? 'Вас разыскивает полиция!' : `Розыск: ${'★'.repeat(stars)}${who}`, 2600);
+        Sound.siren1();
+      }
       S.stars = stars || 0;
       syncStars(true);
     }
@@ -1844,7 +2069,12 @@
       S.bullets.set(id, { x0: x, y0: y, dx, dy, speed: wp.speed, range: wp.range, w, t0: now, end: null, endKind: 0, ex: 0, ey: 0 });
       if (owner !== S.myId) {
         if (w === W.FLAMER) { S.flameHeard = { at: now, x, y }; if (now - S.flameSndOther > 130) { S.flameSndOther = now; Sound.flame(x, y); } }
-        else { Sound.shot(w, x, y); spawn('flash', x + dx * 0.9, y + dy * 0.9, 1, '#ffcf70', 0.2, 0.06, 0.28); }
+        else if (w === W.LAUNCHER && (owner === -106 || inTank(owner))) {
+          // выстрел танка: гулкий, с дымом из дула
+          Sound.cannon(x, y);
+          spawn('flash', x, y, 2, '#ffcf70', 0.4, 0.1, 0.55);
+          spawn('smoke', x, y, 4, '#666', 1.2, 1.2, 0.35);
+        } else { Sound.shot(w, x, y); spawn('flash', x + dx * 0.9, y + dy * 0.9, 1, '#ffcf70', 0.2, 0.06, 0.28); }
       }
     }
     if (m.be) for (const [id, x, y, kind] of m.be) {
@@ -1918,6 +2148,9 @@
     if (m.ck) for (const [vid, pid, x, y] of m.ck) { Sound.thud(x, y); spawn('blood', x, y, 8, '#9b0f0f', 4, 0.5, 0.12); }
     if (m.vf) for (const id of m.vf) { const v = S.vehicles.get(id); if (v) Sound.fire(v.rx, v.ry); if (id === S.me.vehicle) toast('Машина горит - выходите!', 2500); }
     if (m.vx) for (const id of m.vx) S.vehicles.delete(id);
+    // вертолёт: сбит - падает, крутясь; исчез - разбился (взрыв приходит отдельно) или улетел
+    if (m.hf) for (const id of m.hf) { const h = S.helis.get(id); if (h && !h.fallAt) h.fallAt = now; feed('Полицейский вертолёт сбит!'); }
+    if (m.hx) for (const id of m.hx) S.helis.delete(id);
     // деревянное горит
     if (m.tf) for (const k of m.tf) S.tileFires.set(k, now + 9000);
     if (m.tfx) for (const k of m.tfx) S.tileFires.delete(k);
@@ -2020,7 +2253,11 @@
     $('stText').textContent = me.sprinting ? 'Рывок!' : 'Выносливость';
     const v = me.vehicle ? S.vehicles.get(me.vehicle) : null;
     $('carBar').hidden = !v;
-    if (v) { $('carFill').style.width = clamp((v.hp / CAR.HP) * 100, 0, 100) + '%'; $('carText').textContent = v.fl & 2 ? 'Машина горит!' : 'Машина ' + Math.round((v.hp / CAR.HP) * 100) + '%'; }
+    if (v) {
+      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : 'Машина';
+      $('carFill').style.width = clamp(v.hp, 0, 100) + '%';
+      $('carText').textContent = v.fl & 2 ? what + ' горит!' : what + ' ' + Math.round(v.hp) + '%';
+    }
     renderMiniBoard();
     const sig = me.cur + '|' + me.ammo.join(',') + '|' + me.alive;
     if (force || sig !== hudSig) {
@@ -2229,7 +2466,7 @@
       g.save();
       g.translate(toX(vx), toY(vy));
       g.rotate(va);
-      g.fillStyle = v.fl & 2 ? '#ff7a1a' : CAR_COLORS[v.color] || '#888';
+      g.fillStyle = v.fl & 2 ? '#ff7a1a' : v.kind === 4 ? '#556b2f' : v.kind === 3 ? '#1c2233' : CAR_COLORS[v.color] || '#888';
       const L = Math.max(4 * u, CAR.HL * 2 * k), Wd = Math.max(2 * u, CAR.HW * 2 * k);
       g.fillRect(-L / 2, -Wd / 2, L, Wd);
       g.strokeStyle = v.driver && !(v.fl & 4) ? '#ffffff' : 'rgba(0,0,0,0.7)';
@@ -2292,9 +2529,38 @@
       g.fillRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u); g.strokeRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u);
       g.fillStyle = '#e53935'; g.fillRect(sx - 1 * u, sy - 3 * u, 2 * u, 6 * u); g.fillRect(sx - 3 * u, sy - 1 * u, 6 * u, 2 * u);
     }
+    // танки (оливковый квадрат с башней) и полицейские вертолёты (крутится винт); за краем радара - стрелка
+    const edgeArrow = (px, py, col) => {
+      const ang = Math.atan2(py - cy, px - cx), mg = 9 * u;
+      const ex = clamp(size / 2 + Math.cos(ang) * size, mg, size - mg), ey = clamp(size / 2 + Math.sin(ang) * size, mg, size - mg);
+      g.save(); g.translate(ex, ey); g.rotate(ang);
+      g.fillStyle = col; g.strokeStyle = '#fff'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(5 * u, 0); g.lineTo(-3 * u, 4 * u); g.lineTo(-3 * u, -4 * u); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    };
+    for (const [px, py] of S.tanks) {
+      const sx = toX(px), sy = toY(py);
+      if (sx >= 0 && sy >= 0 && sx <= size && sy <= size) {
+        g.fillStyle = '#556b2f'; g.strokeStyle = '#fff'; g.lineWidth = Math.max(1, u * 0.8);
+        g.fillRect(sx - 4.5 * u, sy - 4.5 * u, 9 * u, 9 * u); g.strokeRect(sx - 4.5 * u, sy - 4.5 * u, 9 * u, 9 * u);
+        g.fillStyle = '#20280f'; g.beginPath(); g.arc(sx, sy, 2.2 * u, 0, Math.PI * 2); g.fill();
+      } else if (!full) edgeArrow(px, py, '#556b2f');
+    }
+    for (const [px, py] of S.helisMM) {
+      const sx = toX(px), sy = toY(py);
+      if (sx >= 0 && sy >= 0 && sx <= size && sy <= size) {
+        const r = 6 * u, q = now / 90;
+        g.strokeStyle = blink ? '#ff3030' : '#3a7bff'; g.lineWidth = Math.max(1.5, u * 1.2);
+        g.beginPath();
+        g.moveTo(sx + Math.cos(q) * r, sy + Math.sin(q) * r); g.lineTo(sx - Math.cos(q) * r, sy - Math.sin(q) * r);
+        g.moveTo(sx - Math.sin(q) * r, sy + Math.cos(q) * r); g.lineTo(sx + Math.sin(q) * r, sy - Math.cos(q) * r);
+        g.stroke();
+        g.fillStyle = '#fff'; g.beginPath(); g.arc(sx, sy, 2 * u, 0, Math.PI * 2); g.fill();
+      } else if (!full) edgeArrow(px, py, '#3a7bff');
+    }
     for (const n of S.peds.values()) {
-      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
-      g.fillStyle = n.kind === 1 ? '#3a7bff' : '#ff5050';
+      if (!(n.fl & 1) || !(LAW_KIND(n.kind) || (n.fl & 16))) continue;
+      g.fillStyle = LAW_KIND(n.kind) ? '#3a7bff' : '#ff5050';
       g.beginPath(); g.arc(toX(n.rx), toY(n.ry), 2.2 * u, 0, Math.PI * 2); g.fill();
     }
     // кто стреляет
@@ -2488,6 +2754,18 @@
     if (input.pressFire && now - input.pressAt > PRESS_MS) input.pressFire = false; // давнее нажатие не стреляет с опозданием
     if (!S.me.alive || !(input.fire || input.pressFire)) return;
     if (S.me.sprinting || now < S.me.rollUntil) { input.pressFire = false; return; }
+    // в танке - снаряд из башни раз в 1.6 с; оружие в руках не тратится (как на сервере)
+    if (S.me.vehicle && S.car && S.car.kind === 4) {
+      if (now < S.me.nextShot) return;
+      input.pressFire = false;
+      S.me.nextShot = now + 1600;
+      const dx = Math.cos(S.me.a), dy = Math.sin(S.me.a);
+      Sound.cannon();
+      spawn('flash', S.me.x + dx * 2.7, S.me.y + dy * 2.7, 2, '#ffcf70', 0.4, 0.1, 0.55);
+      spawn('smoke', S.me.x + dx * 2.8, S.me.y + dy * 2.8, 4, '#666', 1.2, 1.2, 0.35);
+      if (!a11y('motion')) S.shake = Math.max(S.shake, 0.4);
+      return;
+    }
     const w = WEAPONS[S.me.cur];
     if (now < S.me.nextShot) return;
     if ((w.melee && S.me.vehicle) || (w.id !== W.FISTS && !(S.me.ammo[w.id] > 0))) {
@@ -2557,7 +2835,7 @@
       S.rammed.set(kk, now);
       const x = kk % S.map.w, y = Math.floor(kk / S.map.w), t = S.map.block[kk];
       spawn('debris', x + 0.5, y + 0.5, 8, DEBRIS[t] || '#777', 5, 0.8, 0.14);
-      if (t === B.GLASS) Sound.glass(x, y); else Sound.wood(x, y);
+      if (t === B.GLASS) Sound.glass(x, y); else if (t === B.BRICK || t === B.CAR) Sound.brick(x, y); else Sound.wood(x, y);
     }
     if (res.impact > 3 && now - S.crashAt > 300) {
       S.crashAt = now;
@@ -2570,6 +2848,15 @@
       if (o.id === car.id || now - o.seen > 600) continue;
       if (Math.abs(o.rx - car.x) > 4.6 || Math.abs(o.ry - car.y) > 4.6) continue;
       const other = { x: o.rx, y: o.ry, a: o.ra };
+      // свой танк: машина, которую он задел, взрывается (это решает сервер), сам танк от неё не отскакивает
+      if (car.kind === 4 && o.kind !== 4) {
+        if (KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, CAR.HL, CAR.HW) && now - (S.ramAt.get(o.id) || 0) > 400) {
+          S.ramAt.set(o.id, now);
+          const od2 = o.driver ? S.players.get(o.driver) : null;
+          if (od2 && !od2.bot && !(o.fl & 4)) send({ t: 'ram', id: o.id, s: 1 }); // машина другого игрока
+        }
+        continue;
+      }
       const ovx = o.vx || 0, ovy = o.vy || 0;
       let isStatic = false;
       if (o.fl & 4) {
@@ -2700,28 +2987,35 @@
     for (const v of S.vehicles.values()) {
       if (!(v.fl & 16) || !v.kind) continue;
       const d = Math.hypot(v.rx - S.me.x, v.ry - S.me.y);
-      if (v.kind === 1 && d < pd) { pd = d; pol = v; }
+      if ((v.kind === 1 || v.kind === 3) && d < pd) { pd = d; pol = v; }
       if (v.kind === 2 && d < ad) { ad = d; amb = v; }
     }
     if (pol) want.push({ key: 'pol', name: 'siren', gain: 0.45, x: pol.rx, y: pol.ry });
     if (amb) want.push({ key: 'amb', name: 'ambulance', gain: 0.4, x: amb.rx, y: amb.ry });
+    // винт ближайшего вертолёта (сбитый - ниже тоном)
+    let hel = null, hd = 50;
+    for (const h of S.helis.values()) { const d = Math.hypot(h.rx - S.me.x, h.ry - S.me.y); if (d < hd) { hd = d; hel = h; } }
+    if (hel) want.push({ key: 'heli', name: 'rotor', gain: 0.75, x: hel.rx, y: hel.ry, rate: hel.fl & 1 ? 0.8 : 1 });
     Sound.loops(want);
   }
 
   function updateEngines() {
     const list = [];
-    if (S.me.vehicle && S.car) list.push({ freq: 42 + Math.abs(S.car.v) * 7 + (S.car.thr > 0 ? 12 : 0), gain: 0.05 + Math.min(0.07, Math.abs(S.car.v) * 0.005) + (S.car.thr ? 0.02 : 0) });
+    // танк гудит ниже и громче
+    const tk4 = S.car && S.car.kind === 4;
+    if (S.me.vehicle && S.car) list.push({ freq: (tk4 ? 24 : 42) + Math.abs(S.car.v) * (tk4 ? 4 : 7) + (S.car.thr > 0 ? 12 : 0), gain: (tk4 ? 0.09 : 0.05) + Math.min(0.07, Math.abs(S.car.v) * 0.005) + (S.car.thr ? 0.02 : 0) });
     else list.push(null);
     const near = [];
     for (const v of S.vehicles.values()) {
-      if (v.id === S.me.vehicle || Math.abs(v.v) < 1) continue;
+      if (v.id === S.me.vehicle || (Math.abs(v.v) < 1 && v.kind !== 4)) continue;
       const d = Math.hypot(v.rx - S.me.x, v.ry - S.me.y);
       if (d < 24) near.push({ d, v });
     }
     near.sort((a, b) => a.d - b.d);
     for (let i = 0; i < 2; i++) {
       const n = near[i];
-      list.push(n ? { freq: 38 + Math.abs(n.v.v) * 6, gain: 0.045 * Math.pow(1 - n.d / 24, 1.5) } : null);
+      const t4 = n && n.v.kind === 4;
+      list.push(n ? { freq: (t4 ? 24 : 38) + Math.abs(n.v.v) * (t4 ? 4 : 6), gain: (t4 ? 0.08 : 0.045) * Math.pow(1 - n.d / 24, 1.5) } : null);
     }
     Sound.engines(list);
   }
@@ -2790,7 +3084,12 @@
       if (!inView(v.rx - 3, v.ry - 3, 6, 6)) continue;
       const speed = id === S.me.vehicle && S.car ? S.car.v : v.v;
       const fl = id === S.me.vehicle && S.car ? (v.fl & ~1) | (S.car.thr < 0 && S.car.v > 0.5 ? 1 : 0) : v.fl;
-      drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle, v.kind, now);
+      if (v.kind === 4) {
+        // танк: гусеницы бегут по ходу, башня смотрит туда, куда целится водитель
+        v.trk = (v.trk || 0) + speed * dt;
+        v.tr = id === S.me.vehicle && S.car ? S.me.a : v.tr === undefined ? v.tur : v.tr + angDiff(v.tur, v.tr) * Math.min(1, dt * 8);
+      }
+      drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle, v.kind, now, v);
       v.drawnAt = now; // для проверки «каждого стрелка видно»
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
@@ -2868,6 +3167,13 @@
       ctx.beginPath(); ctx.moveTo(S.me.x + Math.cos(S.me.a) * start, S.me.y + Math.sin(S.me.a) * start); ctx.lineTo(S.me.x + Math.cos(S.me.a) * len, S.me.y + Math.sin(S.me.a) * len); ctx.stroke();
       ctx.setLineDash([]);
     }
+    // в танке (мышью): круг взрыва снаряда там, куда целишься
+    if (S.me.alive && input.mode !== 'touch' && S.me.vehicle && S.car && S.car.kind === 4 && S.aimPt) {
+      const lw = WEAPONS[W.LAUNCHER], dd = Math.min(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y), lw.range + 2.6);
+      ctx.strokeStyle = 'rgba(255,120,60,0.7)';
+      ctx.lineWidth = 0.07;
+      ctx.beginPath(); ctx.arc(S.me.x + Math.cos(S.me.a) * dd, S.me.y + Math.sin(S.me.a) * dd, lw.blast.r, 0, Math.PI * 2); ctx.stroke();
+    }
     if (S.me.alive && !S.me.vehicle) {
       const mp = S.players.get(S.myId);
       ctx.strokeStyle = 'rgba(255,210,63,0.75)';
@@ -2884,6 +3190,7 @@
     drawCanopies(x0, y0, x1, y1);
     drawParticles(true);
     drawEffects(now);
+    drawHelis(now, dt, rt, inView, tags);
 
     // --- экранный слой ---
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2933,7 +3240,7 @@
     if (input.mode === 'touch') {
       drawStick(input.move, cw * 0.16, ch * 0.72, 'rgba(255,255,255,');
       drawAimStick();
-      if (input.aim && input.aim.dragged && S.aimPt && S.me.alive && !WEAPONS[S.me.cur].melee) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, 18);
+      if (input.aim && input.aim.dragged && S.aimPt && S.me.alive && !curWeapon().melee) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, 18);
     }
   }
 
@@ -3155,11 +3462,11 @@
   // Указатель прицела на земле: потянул кнопку - полоса до дальности оружия (у гранаты - круг взрыва),
   // просто держишь - красное кольцо на цели автоприцела
   function drawAimGuide(now) {
-    const w = WEAPONS[S.me.cur];
+    const w = curWeapon();
     if (S.me.vehicle && w.melee) return;
     if (input.aim.dragged) {
       const a = S.me.a, c = Math.cos(a), s = Math.sin(a);
-      const start = S.me.vehicle ? 1.3 : 0.6;
+      const start = S.me.vehicle ? (S.car && S.car.kind === 4 ? 2.6 : 1.3) : 0.6;
       const toAim = S.aimPt ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : w.range || 10;
       const reach = w.grenade ? toAim : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, Math.max(start + 0.6, Math.min(w.range || 10, toAim)));
       const hw = w.pellets > 1 ? 0.25 + Math.tan(w.spread / 2) * reach : 0.28;

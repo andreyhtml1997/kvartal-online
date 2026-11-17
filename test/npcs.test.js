@@ -40,6 +40,7 @@ assert.strictEqual(inWall, 0, 'прохожие не застревают в с�
 // 2. нападение: раненый убегает или отстреливается; убитый вооружённый роняет оружие; звезда розыска
 const victim = ped[0];
 victim.w = W.PISTOL;
+victim.hp = victim.maxHp; // за прогрев его могла задеть машина - тогда 10 урона его добьют (замер 17.11: 1 прогон из 8)
 N.damage(victim, 10, me.id, W.PISTOL, victim.x, victim.y);
 console.log(`раненый прохожий: ${victim.state}`);
 assert.ok(victim.state === 'flee' || victim.state === 'fight', 'раненый убегает или отвечает');

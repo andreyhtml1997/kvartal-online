@@ -10,7 +10,8 @@ const { generateMap } = require('./mapgen');
 const geom = require('./geom');
 const { Bots } = require('./bots');
 const { Vehicles } = require('./vehicles');
-const { Npcs } = require('./npcs');
+const { Npcs, LAW_SHOT } = require('./npcs');
+const LAW_CAR = { police: true, swat: true, tank: true }; // машины закона: пули полиции, спецназа и армии их не портят
 const { G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, STAMINA } = KV;
 
 const DT = 1 / KV.TICK_RATE;
@@ -18,6 +19,8 @@ const MAX_HUMANS = 16;
 const MIN_PLAYERS = 10;         // боты добирают до этого числа
 const MAX_PICKUPS = 48;
 const CAR_BULLET = 0.6;         // пули по машине - доля урона по человеку (как было до 17.11: сильнее - машины слишком хрупкие)
+const HELI_BULLET = 1;          // пули по вертолёту - доля урона по человеку (сбить: ~25 попаданий из автомата)
+const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
 const PICKUP_LIFE = 120;        // с
 const PRESS_LATCH = 0.3;        // с: нажатие во время перезарядки стреляет, только если она кончится за это время
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
@@ -38,7 +41,8 @@ function emptyEvents() {
   return {
     b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
     en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: [],
-    nh: [], nk: [], rv: [], ws: [] // жители: попадание, смерть, вылечен; звёзды розыска игрока
+    nh: [], nk: [], rv: [], ws: [], // жители: попадание, смерть, вылечен; звёзды розыска игрока
+    hf: [], hx: [] // вертолёт сбит (падает); вертолёт исчез (разбился или улетел)
   };
 }
 
@@ -247,6 +251,7 @@ class Room {
         if (process.env.KV_DEBUG !== '1') break;
         if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
         if (msg.god) p.prot = this.time + 600;
+        if (msg.immortal) p.godUntil = this.time + 600; // не снимается стрельбой (для проверок под огнём)
         if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
         if (msg.shroom) {
           const spot = [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2], [0, 0]].find(([dx, dy]) => KV.circleFree(this.map, p.x + dx, p.y + dy, KV.PLAYER_R));
@@ -280,6 +285,23 @@ class Room {
             if (!KV.carHitsHard(this.map, x, y, Math.PI / 2, 0.05)) { this.vehicles.create(x, y, Math.PI / 2, 5, 'parked', null); this.teleport(p, x + CAR.HW + 0.7, y); }
           }
         }
+        if (msg.veh === 'tank' || msg.veh === 'swat') {
+          // стоящая техника на дороге и игрок у её двери - для проверки угона и стрельбы из танка
+          const r = this.map.roads.x[1] || this.map.roads.x[0];
+          for (let i = 0; i < 40; i++) {
+            const x = r[0] + 2, y = 20 + Math.random() * (this.map.h - 40);
+            if (KV.carOverlapsSolid(this.map, x, y, Math.PI / 2, 0.05, null) || !KV.circleFree(this.map, x + CAR.HW + 0.7, y, KV.PLAYER_R)) continue;
+            if ([...this.vehicles.list.values()].some(o => !o.dead && Math.hypot(o.x - x, o.y - y) < 7)) continue;
+            this.vehicles.setKind(this.vehicles.create(x, y, Math.PI / 2, 6, 'parked', null), msg.veh);
+            this.teleport(p, x + CAR.HW + 0.7, y);
+            break;
+          }
+        }
+        if (msg.heli) {
+          // вертолёт сразу рядом (для проверки); без розыска от 4 звёзд он улетит
+          const h = this.npcs.spawnHeli(p);
+          h.x = p.x + 7; h.y = p.y - 3;
+        }
         if (Array.isArray(msg.tp)) {
           const x = Number(msg.tp[0]), y = Number(msg.tp[1]);
           if (Number.isFinite(x) && Number.isFinite(y) && KV.circleFree(this.map, x, y, KV.PLAYER_R)) this.teleport(p, x, y);
@@ -304,7 +326,12 @@ class Room {
       if (Number.isFinite(vw) && Number.isFinite(vh)) p.view = [Math.max(8, Math.min(70, vw)), Math.max(8, Math.min(70, vh))];
     }
     if (!p.alive) return;
-    if (p.vehicle) { this.vehicles.onDrive(p, m.c); return; }
+    if (p.vehicle) {
+      const v = this.vehicles.list.get(p.vehicle);
+      if (v && v.kind === 'tank') v.turret = p.a; // башня танка смотрит туда, куда целится водитель
+      this.vehicles.onDrive(p, m.c);
+      return;
+    }
     if (m.tp !== p.tp) return;
     const x = Number(m.x), y = Number(m.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -390,6 +417,20 @@ class Room {
     // на рывке не стреляют
     if (p.sprint && !p.vehicle && this.time - p.lastMoveTime < 0.25 && p.stamina > 0) { p.fireLatch = false; return; }
     if (p.cur !== W.FISTS && !(p.ammo[p.cur] > 0)) { p.cur = this.bestWeapon(p); p.fireLatch = false; return; }
+    // в танке атака - снаряд из башни туда, куда целишься; оружие в руках при этом не тратится
+    const tank = p.vehicle ? this.vehicles.list.get(p.vehicle) : null;
+    if (tank && tank.kind === 'tank') {
+      p.fireLatch = false;
+      p.nextShot = this.time + TANK_RELOAD;
+      p.prot = 0;
+      p.shotAt = this.time;
+      if (!p.isBot) this.recentShots.push({ x: p.x, y: p.y, t: this.time });
+      tank.turret = p.a;
+      this.spawnShot(tank.x + Math.cos(p.a) * 2.6, tank.y + Math.sin(p.a) * 2.6, p.a, WEAPONS[W.LAUNCHER], p.id, tank.id,
+        Math.max(0, (p.aimD || 20) - 2.6), 0, this.npcs.aimHeli(p) ? 2 : 0);
+      this.npcs.noise(p.x, p.y, 16);
+      return;
+    }
     const w = WEAPONS[p.cur];
     if (w.melee && p.vehicle) { p.fireLatch = false; return; } // из машины кулаками не бьют
     p.fireLatch = false;
@@ -407,12 +448,15 @@ class Room {
     p.ammo[p.cur]--;
     // из машины пуля вылетает из окна, огонь - из сопла огнемёта
     const off = p.vehicle ? 0.6 : w.flame ? 0.75 : 0;
-    this.spawnShot(p.x + Math.cos(p.a) * off, p.y + Math.sin(p.a) * off, p.a, w, p.id, p.vehicle || 0, p.aimD, 0);
+    // целится в вертолёт - стреляет вверх: стены и люди внизу пуле не мешают
+    const up = !w.flame && this.npcs.aimHeli(p) ? 2 : 0;
+    this.spawnShot(p.x + Math.cos(p.a) * off, p.y + Math.sin(p.a) * off, p.a, w, p.id, p.vehicle || 0, p.aimD, 0, up);
     if (p.ammo[p.cur] <= 0) p.cur = this.bestWeapon(p);
   }
 
-  // Пули одного выстрела (у дробовика - веер). ownerId - игрок; у жителей - отрицательный (-100 - вид), npcId - кто именно
-  spawnShot(x, y, a, w, ownerId, vehId, aimD, npcId) {
+  // Пули одного выстрела (у дробовика - веер). ownerId - игрок; у жителей - отрицательный (-100 - вид), npcId - кто именно.
+  // air: 1 - очередь с вертолёта (первые 70% пути пуля над домами и людьми, дальше как обычная), 2 - выстрел вверх по вертолёту
+  spawnShot(x, y, a, w, ownerId, vehId, aimD, npcId, air) {
     const n = w.pellets || 1;
     for (let i = 0; i < n; i++) {
       const ang = n > 1 ? a + (i / (n - 1) - 0.5) * w.spread + (Math.random() - 0.5) * 0.05 : a + (Math.random() - 0.5) * 2 * w.spread;
@@ -420,7 +464,8 @@ class Room {
       const reach = w.grenade && aimD > 1 ? Math.max(2.5, Math.min(w.range, aimD)) : w.range;
       const b = {
         id: this.nextBullet++, owner: ownerId, npc: npcId || 0, veh: vehId || 0, w: w.id, x, y,
-        dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: reach, range: reach, dead: false, flame: !!w.flame, hit: null
+        dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: reach, range: reach, dead: false, flame: !!w.flame, hit: null,
+        air: air || 0, airD: air === 1 ? (aimD || reach) * 0.7 : 0
       };
       this.bullets.push(b);
       this.ev.b.push([b.id, w.id, r2(x), r2(y), r3(ang), ownerId]);
@@ -449,7 +494,7 @@ class Room {
       for (const v of this.vehicles.list.values()) {
         if (v.dead || Math.abs(v.x - sx) > 3 || Math.abs(v.y - sy) > 3) continue;
         if (KV.distToOBB(sx, sy, v.x, v.y, v.a, CAR.HL, CAR.HW) > 0.3) continue;
-        this.vehicles.damage(v, w.carDmg, p.id);
+        this.vehicles.damage(v, w.carDmg * (v.bulletK || 1), p.id);
         if (Math.random() < 0.35) this.ev.cr.push([r2(sx), r2(sy), 3]);
         return;
       }
@@ -461,27 +506,45 @@ class Room {
   updateBullets() {
     const m = this.map;
     for (const b of this.bullets) {
-      const step = Math.min(b.speed * DT, b.left);
-      const hitT = geom.raycast(m, b.x, b.y, b.dx, b.dy, step);
-      if (b.flame) { this.stepFlame(b, step, hitT); continue; }
-      let tBest = hitT ? hitT.t : Infinity, target = null, car = null;
-      for (const p of this.players.values()) {
-        if (!p.alive || p.id === b.owner || p.vehicle) continue;
-        const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
-        if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
+      let step = Math.min(b.speed * DT, b.left);
+      // очередь с вертолёта: пока пуля высоко, она пролетает над домами и людьми; остаток шага - как у обычной
+      // (иначе быстрая пуля за один такт перелетает цель целиком «по воздуху»)
+      if (b.air === 1 && b.range - b.left < b.airD) {
+        const adv = Math.min(step, b.airD - (b.range - b.left));
+        b.x += b.dx * adv; b.y += b.dy * adv; b.left -= adv; step -= adv;
+        if (step <= 1e-6) {
+          if (b.left <= 1e-6) { b.dead = true; this.ev.be.push([b.id, r2(b.x), r2(b.y), 0]); }
+          continue;
+        }
       }
-      // жители города
-      let npcT = null;
-      const nh = this.npcs.rayHit(b, step, tBest);
-      if (nh) { tBest = nh.t; npcT = nh.n; target = null; }
-      for (const v of this.vehicles.list.values()) {
-        if (v.dead || v.id === b.veh) continue;
-        if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
-        const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
-        if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; }
+      // выстрел вверх по вертолёту летит над домами и людьми
+      const high = b.air === 2;
+      const hitT = high ? null : geom.raycast(m, b.x, b.y, b.dx, b.dy, step);
+      if (b.flame) { this.stepFlame(b, step, hitT); continue; }
+      let tBest = hitT ? hitT.t : Infinity, target = null, car = null, npcT = null, heli = null;
+      if (!high) {
+        for (const p of this.players.values()) {
+          if (!p.alive || p.id === b.owner || p.vehicle) continue;
+          const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
+          if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
+        }
+        // жители города
+        const nh = this.npcs.rayHit(b, step, tBest);
+        if (nh) { tBest = nh.t; npcT = nh.n; target = null; }
+        for (const v of this.vehicles.list.values()) {
+          if (v.dead || v.id === b.veh) continue;
+          if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
+          const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
+          if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; }
+        }
+      }
+      // полицейский вертолёт: в него попадают пули игроков и ботов
+      if (b.owner > 0 && b.air !== 1) {
+        const hh = this.npcs.heliHit(b, step, tBest);
+        if (hh) { tBest = hh.t; heli = hh.h; target = null; npcT = null; car = null; }
       }
       const w = WEAPONS[b.w];
-      if (target || car || npcT || (hitT && hitT.t <= step)) {
+      if (target || car || npcT || heli || (hitT && hitT.t <= step)) {
         const back = w.grenade ? 0.08 : 0;
         const hx = b.x + b.dx * Math.max(0, tBest - back), hy = b.y + b.dy * Math.max(0, tBest - back);
         b.dead = true;
@@ -494,10 +557,15 @@ class Room {
         } else if (npcT) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
           this.npcs.damage(npcT, w.dmg * fall, b.owner, w.id, hx, hy);
-        } else if (car) {
-          // по машине пули бьют сильно; сидящего внутри пулей не убить - только взорвав машину
+        } else if (heli) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 4]);
-          this.vehicles.damage(car, w.dmg * fall * CAR_BULLET, b.owner);
+          this.npcs.heliDamage(heli, w.dmg * fall * HELI_BULLET, b.owner);
+        } else if (car) {
+          // по машине пули бьют сильно; сидящего внутри пулей не убить - только взорвав машину; у техники броня.
+          // Свои машины полиция не портит: пуля бьётся о них, как об укрытие (иначе в перестрелке полиция
+          // взрывала свои же машины - замер 17.11: к концу боя не оставалось ни одной)
+          this.ev.be.push([b.id, r2(hx), r2(hy), 4]);
+          if (!(LAW_SHOT.has(b.owner) && LAW_CAR[car.kind])) this.vehicles.damage(car, w.dmg * fall * CAR_BULLET * (car.bulletK || 1), b.owner);
         } else {
           this.ev.be.push([b.id, r2(hx), r2(hy), 1]);
           if (hitT.k >= 0 && m.block[hitT.k] === B.BARREL) this.destroyTile(hitT.k, b.owner); // бочка взрывается от любого попадания
@@ -546,7 +614,7 @@ class Room {
     if (car) {
       b.dead = true;
       this.ev.be.push([b.id, r2(b.x + b.dx * tCar), r2(b.y + b.dy * tCar), 5]);
-      this.vehicles.damage(car, w.dmg * 4, b.owner);
+      this.vehicles.damage(car, w.dmg * 4 * (car.bulletK || 1), b.owner);
       return;
     }
     if (hitT && hitT.t <= step) {
@@ -593,7 +661,7 @@ class Room {
   // ---------- урон ----------
   // armorK - какую долю урона может взять броня (от машины броня почти не спасает); silent - без брызг (горение)
   damage(t, amount, attackerId, weaponId, hx, hy, armorK = 0.6, silent = false) {
-    if (!t.alive || amount <= 0 || this.time < t.prot) return;
+    if (!t.alive || amount <= 0 || this.time < t.prot || t.godUntil > this.time) return;
     const absorbed = Math.min(t.ar, amount * armorK);
     t.ar -= absorbed;
     t.hp -= amount - absorbed;
@@ -630,7 +698,8 @@ class Room {
     this.sbDirty = true;
   }
 
-  explode(x, y, blast, ownerId, weaponId) {
+  // skipVeh - машина, которую этот взрыв не трогает (танк, об который взорвалась машина)
+  explode(x, y, blast, ownerId, weaponId, skipVeh) {
     const m = this.map;
     this.ev.x.push([r2(x), r2(y), blast.r]);
     for (const p of this.players.values()) {
@@ -645,15 +714,15 @@ class Room {
     // Машины: урон (ракета поджигает сразу), взрывная волна отбрасывает все машины вокруг.
     // Сидящий внутри от взрыва рядом не страдает - погибнет, только если взорвётся сама машина.
     for (const v of [...this.vehicles.list.values()]) {
-      if (v.dead) continue;
+      if (v.dead || (skipVeh && v.id === skipVeh)) continue;
       const d = KV.distToOBB(x, y, v.x, v.y, v.a, CAR.HL, CAR.HW);
       const reach = blast.r + 3;
       if (d >= reach) continue;
       if (d < blast.r) {
         const k = 1 - d / blast.r;
-        this.vehicles.damage(v, blast.dmg * k * 1.6, ownerId);
+        this.vehicles.damage(v, blast.dmg * k * 1.6 * (v.blastK || 1), ownerId);
       }
-      this.vehicles.blastPush(v, x, y, (1 - d / reach) * 14);
+      this.vehicles.blastPush(v, x, y, (1 - d / reach) * 14 * (v.pushK || 1));
     }
     const r = blast.r;
     for (let ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++) {
@@ -693,7 +762,7 @@ class Room {
     }
   }
 
-  destroyTile(k, ownerId) {
+  destroyTile(k, ownerId, skipVeh) {
     const m = this.map;
     const t = m.block[k];
     if (t === B.NONE || t === B.BORDER) return;
@@ -702,7 +771,7 @@ class Room {
     if (info.rubble !== undefined) m.ground[k] = info.rubble;
     this.ev.tl.push([k, 0, 0, m.ground[k], t]);
     const x = k % m.w, y = Math.floor(k / m.w);
-    if (info.explode) this.pending.push({ at: this.time + 0.12, x: x + 0.5, y: y + 0.5, blast: info.explode, owner: ownerId, w: -1 });
+    if (info.explode) this.pending.push({ at: this.time + 0.12, x: x + 0.5, y: y + 0.5, blast: info.explode, owner: ownerId, w: -1, skip: skipVeh || 0 });
     if (t === B.CRATE) { this.crates--; this.crateLoot(x + 0.5, y + 0.5, ownerId); }
     // соседние кирпичи трескаются: стена рушится кусками
     if (info.crumble) {
@@ -732,7 +801,7 @@ class Room {
     const due = this.pending.filter(e => e.at <= this.time);
     if (!due.length) return;
     this.pending = this.pending.filter(e => e.at > this.time);
-    for (const e of due) this.explode(e.x, e.y, e.blast, e.owner, e.w);
+    for (const e of due) this.explode(e.x, e.y, e.blast, e.owner, e.w, e.skip);
   }
 
   // ---------- ящики: внутри что-то лежит, со временем появляются новые ----------
@@ -956,7 +1025,7 @@ class Room {
       }
       const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)),
         p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0, p.stars || 0];
-      this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), me });
+      this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), h: this.npcs.heliSnap(p, vw + 15, vh + 15), me });
     }
   }
 
@@ -967,13 +1036,15 @@ class Room {
     // настоящие игроки видят друг друга на карте всегда
     const h = [];
     for (const p of this.players.values()) if (!p.isBot && p.alive) h.push([p.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
-    // полиция с мигалками и скорая - на радаре у всех
-    const pc = [], am = [];
+    // полиция и спецназ с мигалками, скорая, танки и вертолёты - на радаре у всех
+    const pc = [], am = [], tk = [], hl = [];
     for (const v of this.vehicles.list.values()) {
-      if (v.dead || !v.siren || v.state !== 'npc') continue;
-      (v.kind === 'police' ? pc : am).push([Math.round(v.x), Math.round(v.y)]);
+      if (v.dead || v.state !== 'npc') continue;
+      if (v.kind === 'tank') tk.push([Math.round(v.x), Math.round(v.y)]);
+      else if (v.siren) (v.kind === 'amb' ? am : pc).push([Math.round(v.x), Math.round(v.y)]);
     }
-    const json = JSON.stringify({ t: 'mm', l, h, pc, am });
+    for (const q of this.npcs.helis.values()) hl.push([Math.round(q.x), Math.round(q.y)]);
+    const json = JSON.stringify({ t: 'mm', l, h, pc, am, tk, hl });
     for (const p of this.players.values()) if (!p.isBot) this.send(p, json);
   }
 

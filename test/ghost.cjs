@@ -36,6 +36,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
           for (const p of S.players.values()) { const s = last(p); if (!s || !(p.flags & 1) || !drawn(p)) continue; const d = Math.hypot(p.rx - x0, p.ry - y0); if (d < best) { best = d; who = 'игрок ' + p.name; } }
           for (const n of S.peds.values()) { if (!(n.fl & 1) || !drawn(n)) continue; const d = Math.hypot(n.rx - x0, n.ry - y0); if (d < best) { best = d; who = 'житель вид ' + n.kind; } }
           for (const c of S.vehicles.values()) { if (!drawn(c)) continue; const d = Math.max(0, Math.hypot(c.rx - x0, c.ry - y0) - 2.2); if (d < best) { best = d; who = 'машина вид ' + (c.kind || 0); } }
+          // полицейский вертолёт (с 4 звёзд) бьёт очередями из-под винта
+          for (const h of (S.helis || new Map()).values()) { if (!drawn(h)) continue; const d = Math.max(0, Math.hypot(h.rx - x0, h.ry - y0) - 1.6); if (d < best) { best = d; who = 'вертолёт'; } }
           // кто стрелял по данным сервера (для отчёта)
           let src = '';
           for (const p of S.players.values()) { const s = last(p); if (s && Math.hypot(s[1] - x0, s[2] - y0) < 3) src += ' данные: игрок ' + p.name + ' флаги ' + p.flags + ' нарисован ' + drawn(p) + ';'; }
