@@ -102,6 +102,7 @@
     big.style.width = big.style.height = bs + 'px';
     $('feed').style.top = (8 + rs + 8) + 'px';
     S.tp = 0;
+    requestAnimationFrame(() => layoutWeaponBar());
     updateRotateHint();
   }
   window.addEventListener('resize', resize);
@@ -2580,6 +2581,37 @@
     });
   })();
 
+  // Полоска оружия: по центру экрана, как было, если помещается между радаром и здоровьем. Иначе (телефон, много оружия)
+  // ячейки ужимаются и полоска встаёт в свободный промежуток; не влезает и так - листается пальцем, выбранное оружие
+  // прокручивается в поле зрения. В портрете промежутка нет - полоска под здоровьем. (17.11.2026: на телефоне с 14 видами
+  // оружия полоска наезжала и на радар, и на здоровье, в портрете уходила за край экрана)
+  let wbarAt = 0;
+  function layoutWeaponBar() {
+    const top = document.querySelector('.hud-top'), bar = $('weaponBar'), tr = document.querySelector('.hud-tr');
+    if (!top || !tr || $('hud').hidden) return;
+    wbarAt = performance.now();
+    top.classList.remove('fit', 'scroll'); bar.classList.remove('tight');
+    top.style.left = top.style.top = top.style.width = '';
+    const mr = mini.getBoundingClientRect(), tb = tr.getBoundingClientRect();
+    const L = mr.right + 6, R = tb.left - 6;
+    const w0 = bar.scrollWidth;
+    if (cw / 2 - w0 / 2 >= L && cw / 2 + w0 / 2 <= R) return;
+    bar.classList.add('tight');
+    top.classList.add('fit');
+    let room = R - L, y = null;
+    if (room < 150) { room = cw - 8 - L; y = tb.bottom + 6; } // портрет: между радаром и здоровьем места нет
+    const w = bar.scrollWidth, use = Math.min(w, room);
+    top.style.left = Math.round(L + (room - use) / 2) + 'px';
+    top.style.width = Math.round(use) + 'px';
+    if (y !== null) top.style.top = Math.round(y) + 'px';
+    if (w > use + 1) {
+      top.classList.add('scroll');
+      const act = bar.querySelector('.slot.active');
+      if (act) bar.scrollLeft = clamp(act.offsetLeft - (use - act.offsetWidth) / 2, 0, w - use);
+    }
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => layoutWeaponBar()).catch(() => {});
+
   let hudSig = '';
   function updateHud(force) {
     const me = S.me;
@@ -2618,7 +2650,8 @@
       $('btnWeaponIcon').innerHTML = ICONS[me.cur] || ICONS[0];
       $('btnWeaponText').textContent = cnt(me.cur);
       $('btnWeapon').setAttribute('aria-label', `Сменить оружие (сейчас: ${WEAPONS[me.cur].name})`);
-    }
+      layoutWeaponBar();
+    } else if (performance.now() - wbarAt > 1000) layoutWeaponBar(); // справа выросла таблица счёта и т.п.
     // кнопки справа
     const car = nearCar();
     // сверху - оружие; в середине - «Сесть» или «Гудок»; внизу - «Рывок» или «Выйти»
