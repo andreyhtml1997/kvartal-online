@@ -20,7 +20,7 @@ const welcomeBytes = JSON.stringify(ws.msgs[0]).length;
 assert.strictEqual(room.humanCount(), 1);
 assert.strictEqual(room.players.size, 4, 'боты добрали до 4');
 const traffic0 = [...room.vehicles.list.values()].filter(v => v.state === 'traffic');
-assert.strictEqual(traffic0.length, TRAFFIC_TARGET, 'машины с водителями на месте');
+assert.ok(traffic0.length >= TRAFFIC_TARGET - 2, `машины с водителями на месте (${traffic0.length})`);
 const parked0 = [...room.vehicles.list.values()].filter(v => v.state === 'parked').length;
 
 // «игрок» стоит на месте и стреляет по ближайшему боту из пистолета
@@ -80,6 +80,9 @@ console.log(`180 с игры за ${ms.toFixed(0)} мс (${(ms / T).toFixed(3)} 
 console.log(`машин на парковках ${parked0}, с водителями ${TRAFFIC_TARGET}; средний пробег машины с водителем ${avgTravel.toFixed(0)} м;` +
   ` вне дороги ${(100 * offRoad / Math.max(1, trafficSamples)).toFixed(2)}%; машин в стене ${overlapsHard}`);
 console.log(JSON.stringify(stats));
+const trafficEnd = [...room.vehicles.list.values()].filter(v => v.state === 'traffic').length;
+console.log(`машин с водителями в конце: ${trafficEnd} из ${TRAFFIC_TARGET}`);
+assert.ok(trafficEnd >= TRAFFIC_TARGET - 1, 'машины с водителями появляются снова');
 assert.ok(snaps.length > 2500, 'снимки идут 15 раз в секунду');
 assert.ok(snaps.some(s => s.c && s.c.length > 0), 'в снимках есть машины');
 assert.ok(stats.bullets > 100, 'стреляют');

@@ -105,7 +105,7 @@ class Vehicles {
   spawnTraffic(initial) {
     const room = this.room;
     if (this.list.size >= MAX_VEHICLES) return null;
-    for (let tries = 0; tries < 40; tries++) {
+    for (let tries = 0; tries < (initial ? 150 : 40); tries++) {
       const d = Math.floor(Math.random() * 4);
       const i = Math.floor(Math.random() * this.vr.length), j = Math.floor(Math.random() * this.hr.length);
       const nx = this.nextInter(i, j, d);
