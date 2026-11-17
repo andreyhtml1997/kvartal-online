@@ -1550,7 +1550,13 @@
       input.aim.dragged = n > 0.22;
       S.aimTarget = null;
       if (input.aim.dragged) {
-        tx = S.me.x + (dx / l) * n * maxAim; ty = S.me.y + (dy / l) * n * maxAim;
+        // стик сопоставлен с экраном: край круга - край экрана в ту же сторону, прицел свободно ходит по всему экрану
+        if (WEAPONS[S.me.cur].melee) { tx = S.me.x + (dx / l) * maxAim; ty = S.me.y + (dy / l) * maxAim; }
+        else {
+          const sx = (S.me.x * S.view.tp + S.view.ox) / dpr + (dx / l) * n * (cw / 2);
+          const sy = (S.me.y * S.view.tp + S.view.oy) / dpr + (dy / l) * n * (ch / 2);
+          tx = (sx * dpr - S.view.ox) / S.view.tp; ty = (sy * dpr - S.view.oy) / S.view.tp;
+        }
         const snap = snapTarget(tx, ty);
         if (snap) { tx = snap.x; ty = snap.y; S.aimSnap = true; }
       } else {
@@ -2920,7 +2926,7 @@
     if (input.mode === 'touch') {
       drawStick(input.move, cw * 0.16, ch * 0.72, 'rgba(255,255,255,');
       drawAimStick();
-      if (input.aim && input.aim.dragged && S.aimPt && S.me.alive && WEAPONS[S.me.cur].grenade) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, 18);
+      if (input.aim && input.aim.dragged && S.aimPt && S.me.alive && !WEAPONS[S.me.cur].melee) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, 18);
     }
   }
 
@@ -3147,7 +3153,8 @@
     if (input.aim.dragged) {
       const a = S.me.a, c = Math.cos(a), s = Math.sin(a);
       const start = S.me.vehicle ? 1.3 : 0.6;
-      const reach = w.grenade && S.aimPt ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, w.range || 10);
+      const toAim = S.aimPt ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : w.range || 10;
+      const reach = w.grenade ? toAim : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, Math.max(start + 0.6, Math.min(w.range || 10, toAim)));
       const hw = w.pellets > 1 ? 0.25 + Math.tan(w.spread / 2) * reach : 0.28;
       ctx.save();
       ctx.translate(S.me.x, S.me.y);

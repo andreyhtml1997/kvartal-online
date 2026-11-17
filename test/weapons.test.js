@@ -116,15 +116,15 @@ assert.strictEqual(KV.WEAPONS.length, 8, 'восемь видов оружия, 
   assert.ok(shots === 1 && room.map.block[k] === 0 && room.ev.x.length >= 1, 'бочка взрывается от одного выстрела');
 }
 
-// 6. ракета поджигает машину сразу
+// 6. ракета по машине: сильный урон, но машина прочная, как раньше - сразу не загорается
 {
   const room = flatRoom();
   const car = room.vehicles.create(60, 30, 0, 1, 'parked', null);
   const s = person(room, 'Гранатомётчик', false, 52, 30, 0);
   arm(s, W.LAUNCHER); s.fireLatch = true; s.latchAt = room.time;
   step(room, 0.6);
-  console.log(`ракета по машине: горит ${car.burn > 0 || car.dead}`);
-  assert.ok(car.burn > 0 || car.dead, 'ракета поджигает машину');
+  console.log(`ракета по машине: прочность ${Math.round(car.hp)} из ${CAR.HP}, горит ${car.burn > 0}`);
+  assert.ok(car.hp < CAR.HP * 0.4 && car.burn <= 0 && !car.dead, 'ракета сильно бьёт, но с одного попадания машина не горит');
 }
 
 // 7. по горящей машине стреляют - взрывается быстрее; 8. сидящего внутри пулей не убить
@@ -171,7 +171,7 @@ assert.strictEqual(KV.WEAPONS.length, 8, 'восемь видов оружия, 
   assert.ok(loot >= 6, 'из взорванных машин выпадает лут');
 }
 
-// 10. давить проще: удар на 4 м/с уже сильно ранит
+// 10. машина сбила человека: урон по скорости, как раньше (4 м/с - 24, на 15 м/с - 90)
 {
   const room = flatRoom();
   const car = room.vehicles.create(40, 100, 0, 1, 'parked', null);
@@ -179,7 +179,7 @@ assert.strictEqual(KV.WEAPONS.length, 8, 'восемь видов оружия, 
   car.v = 4;
   step(room, 0.3);
   console.log(`машина 4 м/с сбила человека: здоровье ${t.alive ? t.hp.toFixed(0) : 'погиб'}`);
-  assert.ok(!t.alive || t.hp <= 45, 'машина ранит сильно уже на малой скорости');
+  assert.ok(t.alive && t.hp >= 70 && t.hp <= 80, 'урон от машины как раньше');
 }
 
 // 11. гриб: 10 секунд эффекта

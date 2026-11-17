@@ -445,9 +445,8 @@ class Npcs {
       if (!n.alive || n.veh || Math.abs(n.x - v.x) > 3.2 || Math.abs(n.y - v.y) > 3.2) continue;
       const out = KV.pushOutOBB(n.x, n.y, KV.PLAYER_R + 0.05, v.x, v.y, v.a, CAR.HL, CAR.HW);
       if (!out) continue;
-      // машина без водителя (катится сама) калечит только на заметной скорости
-      if (speed > (v.state === 'parked' ? 3 : 1.2)) {
-        if (now - (n.carHitAt || -10) < 0.6) continue;
+      if (speed > 2.5) {
+        if (now - (n.carHitAt || -10) < 0.7) continue;
         n.carHitAt = now;
         let kx = out[0] - v.x, ky = out[1] - v.y;
         const kl = Math.hypot(kx, ky) || 1;
@@ -457,7 +456,7 @@ class Npcs {
         const crew = v.crew && v.crew.length ? this.list.get(v.crew[0]) : null;
         const credit = v.driver || (crew ? NPC_ID - crew.kind : 0) || (now - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
         room.ev.ck.push([v.id, 0, r2(n.x), r2(n.y)]);
-        this.damage(n, Math.min(150, 25 + speed * 9), credit, -2, n.x, n.y);
+        this.damage(n, Math.min(90, Math.max(12, speed * 6)), credit, -2, n.x, n.y);
         if (v.state !== 'human') v.v *= 0.85;
       } else { const q = KV.pushOutSafe(this.map, n.x, n.y, out, 0, 0, KV.PLAYER_R); n.x = q[0]; n.y = q[1]; }
     }

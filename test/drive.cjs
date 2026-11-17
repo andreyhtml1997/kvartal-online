@@ -203,6 +203,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(1000);
     const pa1 = await ph.evaluate(() => window.__kv.S.me.ammo[1]);
     check(pa0 - pa1 === 1, `короткое касание - один выстрел (потрачено патронов: ${pa0 - pa1})`);
+    // с пистолетом стик сопоставлен с экраном: палец у края круга влево - прицел у левого края экрана
+    const bb = await ph.evaluate(() => [Math.max(innerWidth * 0.72, innerWidth - 200), innerHeight - Math.min(115, innerHeight * 0.3)]);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bb[0], y: bb[1], id: 11 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: bb[0] - 75, y: bb[1], id: 11 }] });
+    await sleep(250);
+    const far = await ph.evaluate(() => { const S = window.__kv.S, v = S.view, dpr = document.getElementById('game').width / innerWidth;
+      return S.aimPt ? { sx: (S.aimPt[0] * v.tp + v.ox) / dpr, w: innerWidth, snap: S.aimSnap } : null; });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    check(far && (far.snap || far.sx < far.w * 0.2), `стик сопоставлен с экраном: прицел у левого края (x=${far ? Math.round(far.sx) : '-'} из ${far ? far.w : '-'})`);
+    await ph.screenshot({ path: OUT + '/aim_far.png' });
     await ph.evaluate(() => window.__kv.send({ t: 'dbg', god: 1 }));
     // держим левый джойстик и касаемся оружия в полоске сверху - оружие меняется на ходу
     const slots = await ph.$$eval('#weaponBar .slot', els => els.map((e, i) => { const r = e.getBoundingClientRect(); return { i, hidden: e.hidden, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }).filter(s => !s.hidden));

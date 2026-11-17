@@ -17,7 +17,7 @@ const DT = 1 / KV.TICK_RATE;
 const MAX_HUMANS = 16;
 const MIN_PLAYERS = 10;         // боты добирают до этого числа
 const MAX_PICKUPS = 48;
-const CAR_BULLET = 1.25;        // во сколько раз пули бьют по машине сильнее, чем по человеку
+const CAR_BULLET = 0.6;         // пули по машине - доля урона по человеку (как было до 17.11: сильнее - машины слишком хрупкие)
 const PICKUP_LIFE = 120;        // с
 const PRESS_LATCH = 0.3;        // с: нажатие во время перезарядки стреляет, только если она кончится за это время
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
@@ -644,8 +644,7 @@ class Room {
       if (d >= reach) continue;
       if (d < blast.r) {
         const k = 1 - d / blast.r;
-        if (weaponId === W.LAUNCHER && k > 0.3) this.vehicles.ignite(v, ownerId);
-        else this.vehicles.damage(v, blast.dmg * k * 1.6, ownerId);
+        this.vehicles.damage(v, blast.dmg * k * 1.6, ownerId);
       }
       this.vehicles.blastPush(v, x, y, (1 - d / reach) * 14);
     }

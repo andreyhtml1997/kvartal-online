@@ -14,6 +14,7 @@ const { CAR, CAR_BLAST } = KV;
 const TRAFFIC_TARGET = 14;
 const TRAFFIC_SPEED = 12;
 const KNOCK = 4;             // м/с: удар сильнее - водитель-NPC выскакивает, машину отбрасывает
+const CRASH_K = 15 / 21;     // машины стали быстрее (21 м/с вместо 15) - урон от аварий уменьшен, чтобы прочность осталась прежней
 const PARKED_RESPAWN = 60;    // с - через сколько на месте взорванной машины с парковки появится новая
 const EXTRA_VEHICLES = 14;   // сколько машин сверх припаркованных и машин с водителями (брошенные и т.п.)
 const r2 = v => Math.round(v * 100) / 100;
@@ -238,7 +239,7 @@ class Vehicles {
     const res = KV.stepVehicle(this.map, v, thr, steer, dt, null);
     const credit = driverId || v.lastDriver;
     for (const k of res.rammed) this.room.destroyTile(k, credit);
-    if (res.impact > 6) this.damage(v, (res.impact - 5) * 6, v.lastAttacker || credit);
+    if (res.impact > 6) this.damage(v, (res.impact - 5) * 6 * CRASH_K, v.lastAttacker || credit);
     if (res.impact > 3 && this.room.time - v.crashAt > 0.3) { v.crashAt = this.room.time; this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(res.impact)]); }
     // если машина всё же осталась в стене - возвращаем её на место до шага
     if (KV.carOverlapsSolid(this.map, v.x, v.y, v.a, 0.03, null) && !KV.carOverlapsSolid(this.map, bx, by, ba, 0.03, null)) {
@@ -314,7 +315,7 @@ class Vehicles {
     const now = this.room.time;
     if (now - (a.rams.get(b.id) || -10) < 0.4) return;
     a.rams.set(b.id, now);
-    const dmg = Math.max(0, impact - 3) * 5;
+    const dmg = Math.max(0, impact - 3) * 5 * CRASH_K;
     this.damage(a, dmg * 0.7, attackerId);
     this.damage(b, dmg * 0.7, attackerId);
     this.room.ev.cr.push([r2((a.x + b.x) / 2), r2((a.y + b.y) / 2), Math.round(impact)]);
@@ -401,14 +402,12 @@ class Vehicles {
     for (const p of room.players.values()) {
       if (!p.alive || p.vehicle) continue;
       if (Math.abs(p.x - v.x) > 3.2 || Math.abs(p.y - v.y) > 3.2) continue;
-      const out = KV.pushOutOBB(p.x, p.y, KV.PLAYER_R + 0.08, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(p.x, p.y, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
       if (!out) continue;
-      // машина без водителя (катится сама) калечит только на заметной скорости
-      if (speed > (v.state === 'parked' ? 3 : 1.2)) {
-        if (room.time - (v.hitCd.get(p.id) || -10) < 0.6) continue;
+      if (speed > 2.5) {
+        if (room.time - (v.hitCd.get(p.id) || -10) < 0.7) continue;
         v.hitCd.set(p.id, room.time);
-        // машина есть машина: бьёт сильно уже на малой скорости, бронежилет почти не спасает
-        const dmg = Math.min(150, 25 + speed * 9);
+        const dmg = Math.min(90, Math.max(12, speed * 6));
         let kx = out[0] - v.x, ky = out[1] - v.y;
         const kl = Math.hypot(kx, ky) || 1;
         kx = (kx / kl) * 0.6 + (vx / speed) * 0.6;
@@ -426,7 +425,7 @@ class Vehicles {
         }
         // брошенная на ходу машина засчитывает сбитого тому, кто из неё выпрыгнул
         const credit = v.driver || (room.time - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
-        room.damage(p, dmg, credit || this.npcCredit(v), -2, p.x, p.y, 0.2);
+        room.damage(p, dmg, credit || this.npcCredit(v), -2, p.x, p.y);
         if (v.state !== 'human') v.v *= 0.8;
       } else if (p.isBot) {
         const q = KV.pushOutSafe(this.map, p.x, p.y, out, 0, 0, KV.PLAYER_R);
@@ -592,7 +591,7 @@ class Vehicles {
     const s = Math.min(Number(m.s) || 0, 25);
     if (!(s > 3) || this.room.time - v.crashAt < 0.3) return;
     v.crashAt = this.room.time;
-    if (s > 6) this.damage(v, (s - 5) * 6, v.lastAttacker || p.id);
+    if (s > 6) this.damage(v, (s - 5) * 6 * CRASH_K, v.lastAttacker || p.id);
     this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(s)]);
   }
 
