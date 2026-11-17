@@ -57,17 +57,27 @@
       <button type="button" id="btnExit" class="gm-item danger">Выйти в меню</button>
     </div>
 
-    <button type="button" id="btnCar" class="act-btn" hidden aria-label="Сесть в машину">
-      <svg viewBox="0 0 32 24" width="34" height="26" aria-hidden="true"><path fill="currentColor" d="M5 14l2.4-5.6A3 3 0 0 1 10.2 6.5h11.6a3 3 0 0 1 2.8 1.9L27 14h1a2 2 0 0 1 2 2v3h-2.2a3.3 3.3 0 0 1-6.5 0h-10.6a3.3 3.3 0 0 1-6.5 0H2v-3a2 2 0 0 1 2-2zm3.3 0h15.4l-1.8-4.4a1 1 0 0 0-.9-.6H11a1 1 0 0 0-.9.6z"/></svg>
-      <span id="btnCarText">Сесть</span>
+    <!-- Кнопки справа, у каждой своё место (ничего не съезжает под пальцем):
+         сверху - оружие; в середине - «Сесть» (пешком) или «Гудок» (в машине); внизу - «Рывок» (пешком) или «Выйти» (в машине) -->
+    <button type="button" id="btnWeapon" class="act-btn slot-top" hidden aria-label="Сменить оружие">
+      <span id="btnWeaponIcon" class="act-ico"></span>
+      <span id="btnWeaponText">Оружие</span>
     </button>
-    <button type="button" id="btnSprint" class="act-btn" hidden aria-label="Рывок">
+    <button type="button" id="btnCar" class="act-btn slot-mid accent" hidden aria-label="Сесть в машину">
+      <svg viewBox="0 0 32 24" width="34" height="26" aria-hidden="true"><path fill="currentColor" d="M5 14l2.4-5.6A3 3 0 0 1 10.2 6.5h11.6a3 3 0 0 1 2.8 1.9L27 14h1a2 2 0 0 1 2 2v3h-2.2a3.3 3.3 0 0 1-6.5 0h-10.6a3.3 3.3 0 0 1-6.5 0H2v-3a2 2 0 0 1 2-2zm3.3 0h15.4l-1.8-4.4a1 1 0 0 0-.9-.6H11a1 1 0 0 0-.9.6z"/></svg>
+      <span>Сесть</span>
+    </button>
+    <button type="button" id="btnHorn" class="act-btn slot-mid" hidden aria-label="Гудок">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 10v4h3l5 4V6L6 10zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+      <span>Гудок</span>
+    </button>
+    <button type="button" id="btnSprint" class="act-btn slot-low" hidden aria-label="Рывок">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 19 13v-2a5 5 0 0 1-4.3-2.4l-1-1.6a2.1 2.1 0 0 0-2.6-.8L6 8.3V13h2V9.6z"/></svg>
       <span>Рывок</span>
     </button>
-    <button type="button" id="btnHorn" class="act-btn" hidden aria-label="Гудок">
-      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 10v4h3l5 4V6L6 10zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
-      <span>Гудок</span>
+    <button type="button" id="btnLeave" class="act-btn slot-low accent" hidden aria-label="Выйти из машины">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M10 3h9a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-9v-2h9V5h-9zm-1.6 4.6L9.8 9l-2 2H16v2H7.8l2 2-1.4 1.4L4 12z"/></svg>
+      <span>Выйти</span>
     </button>
     <div id="keyHint" hidden></div>
 

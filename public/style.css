@@ -125,6 +125,7 @@ input[type="text"] {
 .gear[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
 
 #feed { position: absolute; top: calc(max(8px, var(--safe-t)) + 96px * var(--hud)); right: max(8px, var(--safe-r)); list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; max-width: 46vw; }
+html.touch #feed { right: calc(max(8px, var(--safe-r)) + 84px * var(--hud)); }
 #feed li { padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); font-size: calc(12px * var(--hud)); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; transition: opacity 0.4s; }
 #feed li .w { color: var(--accent); }
 #feed li.me { border: 1px solid var(--accent); }
@@ -154,8 +155,13 @@ input[type="text"] {
   font: 600 calc(11px * var(--hud))/1.1 system-ui, sans-serif; touch-action: none; cursor: pointer;
 }
 .act-btn.on { background: rgba(255, 210, 63, 0.35); border-color: var(--accent); }
-#btnCar { top: 26%; border-color: var(--accent); }
-#btnSprint, #btnHorn { top: 50%; }
+.act-btn.accent { border-color: var(--accent); }
+/* постоянные места: сверху оружие, в середине «Сесть»/«Гудок», внизу «Рывок»/«Выйти» */
+.act-btn.slot-top { top: 26%; }
+.act-btn.slot-mid { top: calc(26% + 82px * var(--hud)); }
+.act-btn.slot-low { top: calc(26% + 164px * var(--hud)); }
+.act-ico svg { width: calc(34px * var(--hud)); height: calc(18px * var(--hud)); display: block; }
+#btnWeaponText { font: 400 calc(12px * var(--hud))/1.1 var(--font-head); }
 #keyHint { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: rgba(0, 0, 0, 0.65); font-weight: 600; white-space: nowrap; }
 #keyHint b { color: var(--accent); }
 
@@ -206,4 +212,7 @@ body.playing #a11yBtn, body.playing #a11yPanel { display: none !important; }
   .gear { width: calc(38px * var(--hud)); height: calc(38px * var(--hud)); }
   #feed { top: calc(max(8px, var(--safe-t)) + 78px * var(--hud)); }
   .act-btn { width: calc(62px * var(--hud)); height: calc(62px * var(--hud)); }
+  .act-btn.slot-top { top: 24%; }
+  .act-btn.slot-mid { top: calc(24% + 72px * var(--hud)); }
+  .act-btn.slot-low { top: calc(24% + 144px * var(--hud)); }
 }

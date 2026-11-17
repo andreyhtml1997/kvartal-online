@@ -1028,8 +1028,17 @@
   btnSprint.addEventListener('pointerup', sprintOff);
   btnSprint.addEventListener('pointercancel', sprintOff);
   btnSprint.addEventListener('pointerleave', sprintOff);
-  $('btnCar').addEventListener('click', () => { Sound.init(); carAction(); });
-  $('btnHorn').addEventListener('pointerdown', e => { e.preventDefault(); horn(); });
+  // Кнопки справа срабатывают сразу по касанию (даже когда второй палец держит джойстик);
+  // click оставлен для клавиатуры и мыши, без двойного срабатывания
+  function onPress(el, fn) {
+    let at = 0;
+    el.addEventListener('pointerdown', e => { e.preventDefault(); at = performance.now(); Sound.init(); fn(); });
+    el.addEventListener('click', () => { if (performance.now() - at > 600) { Sound.init(); fn(); } });
+  }
+  onPress($('btnCar'), () => carAction());
+  onPress($('btnLeave'), () => carAction());
+  onPress($('btnHorn'), () => horn());
+  onPress($('btnWeapon'), () => cycleWeapon(1));
 
   // видимый противник в секторе прицела (для подсказки прицела на телефоне)
   function losClient(x0, y0, x1, y1) {
@@ -1459,7 +1468,8 @@
       b.title = `${i + 1}. ${w.name}`;
       b.setAttribute('aria-label', w.name);
       b.innerHTML = `${ICONS[i]}<span class="c"></span>`;
-      b.addEventListener('click', () => selectWeapon(i));
+      // срабатывает сразу по касанию, даже когда другой палец держит джойстик
+      onPress(b, () => selectWeapon(i));
       bar.appendChild(b);
       slotEls.push(b);
     });
@@ -1490,15 +1500,19 @@
         el.querySelector('.c').textContent = i === W.FISTS ? '∞' : String(Math.max(0, me.ammo[i]));
         el.setAttribute('aria-pressed', i === me.cur ? 'true' : 'false');
       });
+      // на кнопке смены оружия - значок текущего оружия и патроны
+      $('btnWeaponIcon').innerHTML = ICONS[me.cur] || ICONS[0];
+      $('btnWeaponText').textContent = me.cur === W.FISTS ? '∞' : String(Math.max(0, me.ammo[me.cur]));
+      $('btnWeapon').setAttribute('aria-label', `Сменить оружие (сейчас: ${WEAPONS[me.cur].name})`);
     }
     // кнопки справа
     const car = nearCar();
-    const btnCar = $('btnCar');
-    btnCar.hidden = !(me.alive && (me.vehicle || car));
-    $('btnCarText').textContent = me.vehicle ? 'Выйти' : 'Сесть';
-    btnCar.setAttribute('aria-label', me.vehicle ? 'Выйти из машины' : 'Сесть в машину');
-    btnSprint.hidden = !(isTouch && me.alive && !me.vehicle && (input.move || input.sprintBtn));
+    // сверху - оружие; в середине - «Сесть» или «Гудок»; внизу - «Рывок» или «Выйти»
+    $('btnWeapon').hidden = !(isTouch && me.alive);
+    $('btnCar').hidden = !(me.alive && !me.vehicle && car);
     $('btnHorn').hidden = !(isTouch && me.alive && me.vehicle);
+    btnSprint.hidden = !(isTouch && me.alive && !me.vehicle && (input.move || input.sprintBtn));
+    $('btnLeave').hidden = !(me.alive && me.vehicle);
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
@@ -2147,7 +2161,7 @@
     if (!S.me.alive) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
     if (input.mode === 'touch') {
       drawStick(input.move, cw * 0.16, ch * 0.72, 'rgba(255,255,255,');
-      drawStick(input.aim, cw * 0.84, ch * 0.72, 'rgba(255,120,100,');
+      drawStick(input.aim, cw * 0.72, ch * 0.72, 'rgba(255,120,100,');
     }
   }
 

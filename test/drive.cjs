@@ -50,9 +50,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     console.log(`машина проехала ${moved.toFixed(1)} м; сервер видит [${c1.srv}]`);
     check(moved > 3 || c1.tp === c0.tp, 'машина едет');
     check(Math.hypot(c1.srv[0] - c1.x, c1.srv[1] - c1.y) < 1.5, 'сервер принимает положение машины');
+    // снова газ и выход прямо на ходу
+    await pc.keyboard.down('KeyW'); await sleep(1500);
+    const vBefore = await kv(() => Math.abs(window.__kv.S.car ? window.__kv.S.car.v : 0));
+    const carId = await kv(() => window.__kv.S.me.vehicle);
     await pc.keyboard.press('KeyF');
     await pc.waitForFunction(() => window.__kv.S.me.vehicle === 0, null, { timeout: 5000 }).catch(() => {});
-    check(await kv(() => window.__kv.S.me.vehicle === 0), 'вышел из машины по F');
+    await pc.keyboard.up('KeyW');
+    check(await kv(() => window.__kv.S.me.vehicle === 0), `вышел из машины на ходу (скорость была ${vBefore.toFixed(1)} м/с)`);
+    await sleep(250);
+    const rolling = await kv(id => { const v = window.__kv.S.vehicles.get(id); return v ? Math.abs(v.v) : -1; }, carId);
+    check(rolling > 1 || vBefore < 3, `брошенная машина катится дальше (${rolling.toFixed(1)} м/с)`);
 
     // радар и карта города
     await pc.click('#minimap');
@@ -83,6 +91,55 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(fire, 'палец на правой половине держит атаку');
     await ph.screenshot({ path: OUT + '/phone2.png' });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(300);
+    check(await ph.isVisible('#btnWeapon'), 'на телефоне справа есть кнопка смены оружия');
+    await ph.evaluate(() => window.__kv.send({ t: 'dbg', give: 1, nearCar: 1, god: 1 }));
+    await sleep(900);
+    const w0 = await ph.evaluate(() => window.__kv.S.me.cur);
+    await ph.tap('#btnWeapon');
+    await sleep(300);
+    const w1 = await ph.evaluate(() => window.__kv.S.me.cur);
+    check(w1 !== w0, `кнопка справа меняет оружие (${w0} -> ${w1})`);
+    // держим левый джойстик и касаемся оружия в полоске сверху - оружие меняется на ходу
+    const slots = await ph.$$eval('#weaponBar .slot', els => els.map((e, i) => { const r = e.getBoundingClientRect(); return { i, hidden: e.hidden, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }).filter(s => !s.hidden));
+    const curNow = await ph.evaluate(() => window.__kv.S.me.cur);
+    const target = slots.find(s => s.i !== curNow);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 140, y: 290, id: 5 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 175, y: 290, id: 5 }] });
+    await sleep(250);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 175, y: 290, id: 5 }, { x: target.x, y: target.y, id: 6 }] });
+    // отпускаем только палец с кнопки оружия, палец на джойстике остаётся
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 176, y: 290, id: 5 }] });
+    await sleep(300);
+    const curAfter = await ph.evaluate(() => window.__kv.S.me.cur);
+    const stillMoving = await ph.evaluate(() => !!window.__kv.input.move);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    check(curAfter === target.i && stillMoving, `на ходу (палец на джойстике) касание оружия сверху меняет его (${curNow} -> ${curAfter})`);
+    await ph.evaluate(() => window.__kv.send({ t: 'dbg', nearCar: 1 }));
+    await sleep(900);
+    const boxW = await ph.locator('#btnWeapon').boundingBox();
+    check(await ph.isVisible('#btnCar'), 'рядом с машиной справа появилась кнопка «Сесть»');
+    const boxCar = await ph.locator('#btnCar').boundingBox();
+    check(boxCar && boxW && boxCar.y > boxW.y, '«Сесть» под кнопкой оружия');
+    await ph.tap('#btnCar');
+    await ph.waitForFunction(() => window.__kv.S.me.vehicle > 0, null, { timeout: 5000 }).catch(() => {});
+    await sleep(400);
+    const hornVis = await ph.isVisible('#btnHorn'), leaveVis = await ph.isVisible('#btnLeave');
+    check(hornVis && leaveVis, 'в машине справа кнопки «Гудок» и «Выйти»');
+    const bh = await ph.locator('#btnHorn').boundingBox(), bl = await ph.locator('#btnLeave').boundingBox();
+    check(bh && bl && bl.y > bh.y, '«Выйти» снизу, «Гудок» над ней');
+    // газ левым джойстиком и выход на полном ходу
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 140, y: 290, id: 3 }] });
+    const ca = await ph.evaluate(() => window.__kv.S.car.a);
+    const tx = 140 + Math.cos(ca) * 50, ty = 290 + Math.sin(ca) * 50;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx, y: ty, id: 3 }] });
+    await sleep(1400);
+    await ph.screenshot({ path: OUT + '/phone_car.png' });
+    const pv = await ph.evaluate(() => Math.abs(window.__kv.S.car.v));
+    await ph.tap('#btnLeave');
+    await ph.waitForFunction(() => window.__kv.S.me.vehicle === 0, null, { timeout: 5000 }).catch(() => {});
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    check(await ph.evaluate(() => window.__kv.S.me.vehicle === 0), `на телефоне вышел на ходу (скорость ${pv.toFixed(1)} м/с)`);
     await pc.screenshot({ path: OUT + '/pc2.png' });
   } catch (e) {
     ok = false;

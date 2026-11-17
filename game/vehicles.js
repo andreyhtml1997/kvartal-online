@@ -336,7 +336,9 @@ class Vehicles {
           p.budget += imp * 0.6 + 2;
           room.send(p, { t: 'kb', x: r2(kx * imp), y: r2(ky * imp) });
         }
-        room.damage(p, dmg, v.driver || 0, -2, p.x, p.y);
+        // брошенная на ходу машина засчитывает сбитого тому, кто из неё выпрыгнул
+        const credit = v.driver || (room.time - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
+        room.damage(p, dmg, credit, -2, p.x, p.y);
         if (v.state !== 'human') v.v *= 0.8;
       } else if (p.isBot) {
         const q = KV.collideCircle(this.map, out[0], out[1], KV.PLAYER_R);
@@ -402,8 +404,22 @@ class Vehicles {
     }
     p.vehicle = 0;
     v.driver = 0; v.state = 'parked'; v.lastDriver = p.id; v.tp++; v.brake = false;
+    v.exitAt = room.time;
+    v.hitCd.set(p.id, room.time); // своя же машина не сбивает выпрыгнувшего сразу
     room.ev.ex.push([v.id, p.id]);
     room.teleport(p, spot[0], spot[1]);
+    // выпрыгнул на ходу - немного протаскивает по инерции, машина катится дальше сама
+    const speed = Math.abs(v.v);
+    if (speed > 4 && p.alive) {
+      const kx = c * v.v * 0.45, ky = s * v.v * 0.45;
+      if (p.isBot) {
+        const q = KV.moveCircle(this.map, p.x, p.y, kx * 0.25, ky * 0.25, KV.PLAYER_R);
+        p.x = q[0]; p.y = q[1];
+      } else {
+        p.budget += Math.hypot(kx, ky) * 0.5 + 1;
+        room.send(p, { t: 'kb', x: r2(kx), y: r2(ky) });
+      }
+    }
     return true;
   }
 
