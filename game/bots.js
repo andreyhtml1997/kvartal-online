@@ -157,7 +157,7 @@ class Bots {
     if (ai.carGoal) {
       const v = room.vehicles.list.get(ai.carGoal);
       if (!v || v.dead || v.state !== 'parked' || v.burn > 0) ai.carGoal = 0;
-      else if (KV.distToOBB(p.x, p.y, v.x, v.y, v.a, CAR.HL, CAR.HW) < CAR.ENTER - 0.2) {
+      else if (KV.distToOBB(p.x, p.y, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw) < CAR.ENTER - 0.2) {
         ai.carGoal = 0;
         if (room.vehicles.enter(p, v.id)) { ai.driveT = 0; ai.stuckCount = 0; ai.vpath = null; return; }
       }
@@ -202,7 +202,7 @@ class Bots {
     // машины - препятствие
     for (const v of room.vehicles.list.values()) {
       if (v.dead || Math.abs(v.x - nx) > 3 || Math.abs(v.y - ny) > 3) continue;
-      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (out) [nx, ny] = KV.pushOutSafe(room.map, p.x, p.y, out, 0, 0, KV.PLAYER_R);
     }
     const moved = Math.hypot(nx - p.x, ny - p.y);
@@ -250,7 +250,7 @@ class Bots {
     if (!ai.carGoal && ai.likesCars && now > ai.carCooldown) {
       let car = null, cd = 22;
       for (const v of room.vehicles.list.values()) {
-        if (v.dead || v.burn > 0 || v.state !== 'parked' || v.hp < CAR.HP * 0.5) continue;
+        if (v.dead || v.burn > 0 || v.state !== 'parked' || v.moto || v.hp < CAR.HP * 0.5) continue; // мотоцикл боту не по зубам
         const d = Math.hypot(v.x - p.x, v.y - p.y);
         if (d < cd) { cd = d; car = v; }
       }

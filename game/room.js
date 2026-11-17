@@ -266,6 +266,7 @@ class Room {
         if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; else if (w.noAmmo) p.ammo[w.id] = 0; }
         if (msg.god) p.prot = this.time + 600;
         if (msg.immortal) p.godUntil = this.time + 600; // не снимается стрельбой (для проверок под огнём)
+        if (Array.isArray(msg.tpTo) && !p.vehicle) { const q = KV.collideCircle(this.map, Number(msg.tpTo[0]) || p.x, Number(msg.tpTo[1]) || p.y, KV.PLAYER_R); this.teleport(p, q[0], q[1]); }
         if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
         if (msg.shroom) {
           const spot = [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2], [0, 0]].find(([dx, dy]) => KV.circleFree(this.map, p.x + dx, p.y + dy, KV.PLAYER_R));
@@ -299,7 +300,7 @@ class Room {
             if (!KV.carHitsHard(this.map, x, y, Math.PI / 2, 0.05)) { this.vehicles.create(x, y, Math.PI / 2, 5, 'parked', null); this.teleport(p, x + CAR.HW + 0.7, y); }
           }
         }
-        if (msg.veh === 'tank' || msg.veh === 'swat') {
+        if (msg.veh === 'tank' || msg.veh === 'swat' || msg.veh === 'moto') {
           // стоящая техника на дороге и игрок у её двери - для проверки угона и стрельбы из танка
           const r = this.map.roads.x[1] || this.map.roads.x[0];
           for (let i = 0; i < 40; i++) {
@@ -536,6 +537,13 @@ class Room {
     }
     this.grenades = this.grenades.filter(g => !g.dead);
   }
+  // открыт ли человек для пуль, огня и взрывов: пеший или на мотоцикле (в машине его прикрывает кузов)
+  exposed(p) {
+    if (!p.vehicle) return true;
+    const v = this.vehicles.list.get(p.vehicle);
+    return !!(v && v.moto);
+  }
+
   // щит: пуля спереди (±60° от взгляда) в него упирается; сзади и сбоку - попадает
   shieldBlocks(p, b) {
     if (p.vehicle || !WEAPONS[p.cur].shield) return false;
@@ -566,7 +574,7 @@ class Room {
     const ax = Math.cos(p.a), ay = Math.sin(p.a);
     let target = null, bestD = w.range + 0.5;
     for (const o of this.players.values()) {
-      if (o === p || !o.alive || o.vehicle) continue;
+      if (o === p || !o.alive || !this.exposed(o)) continue;
       const dx = o.x - p.x, dy = o.y - p.y, d = Math.hypot(dx, dy);
       if (d > w.range + 0.5 || d >= bestD) continue;
       if ((dx * ax + dy * ay) / (d || 1) < 0.45) continue; // примерно ±63° перед собой
@@ -582,7 +590,7 @@ class Room {
       const sx = p.x + ax * reach, sy = p.y + ay * reach;
       for (const v of this.vehicles.list.values()) {
         if (v.dead || Math.abs(v.x - sx) > 3 || Math.abs(v.y - sy) > 3) continue;
-        if (KV.distToOBB(sx, sy, v.x, v.y, v.a, CAR.HL, CAR.HW) > 0.3) continue;
+        if (KV.distToOBB(sx, sy, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw) > 0.3) continue;
         this.vehicles.damage(v, w.carDmg * (v.bulletK || 1), p.id);
         if (Math.random() < 0.35) this.ev.cr.push([r2(sx), r2(sy), 3]);
         return;
@@ -613,7 +621,7 @@ class Room {
       let tBest = hitT ? hitT.t : Infinity, target = null, car = null, npcT = null, heli = null;
       if (!high) {
         for (const p of this.players.values()) {
-          if (!p.alive || p.id === b.owner || p.vehicle) continue;
+          if (!p.alive || p.id === b.owner || !this.exposed(p)) continue; // мотоциклиста пуля находит
           const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
           if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
         }
@@ -623,7 +631,7 @@ class Room {
         for (const v of this.vehicles.list.values()) {
           if (v.dead || v.id === b.veh) continue;
           if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
-          const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
+          const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
           if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; }
         }
       }
@@ -679,7 +687,7 @@ class Room {
     const w = WEAPONS[b.w];
     const tWall = hitT ? hitT.t : Infinity;
     for (const p of this.players.values()) {
-      if (!p.alive || p.id === b.owner || p.vehicle || (b.hit && b.hit.has(p.id))) continue;
+      if (!p.alive || p.id === b.owner || !this.exposed(p) || (b.hit && b.hit.has(p.id))) continue;
       if (Math.abs(p.x - b.x) > step + 1 || Math.abs(p.y - b.y) > step + 1) continue;
       const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.65);
       if (t < 0 || t > step || t > tWall) continue;
@@ -699,7 +707,7 @@ class Room {
     let car = null, tCar = Infinity;
     for (const v of this.vehicles.list.values()) {
       if (v.dead || v.id === b.veh || Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
-      const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (t >= 0 && t <= step && t < tCar && t < tWall) { tCar = t; car = v; }
     }
     if (car) {
@@ -762,7 +770,7 @@ class Room {
 
   // Человек загорелся от огнемёта: горит secs секунд, урон засчитывается тому, кто поджёг
   ignite(p, by, secs) {
-    if (!p.alive || p.vehicle || this.time < p.prot) return;
+    if (!p.alive || !this.exposed(p) || this.time < p.prot) return;
     p.burnUntil = Math.max(p.burnUntil, this.time + secs);
     p.burnBy = by;
   }
@@ -770,7 +778,7 @@ class Room {
   updateBurning() {
     for (const p of this.players.values()) {
       if (!p.alive || p.burnUntil <= this.time) continue;
-      if (p.vehicle) { p.burnUntil = 0; continue; } // в машине огонь сбивается
+      if (!this.exposed(p)) { p.burnUntil = 0; continue; } // в машине огонь сбивается (на мотоцикле - нет)
       p.burnT += DT;
       if (p.burnT >= 0.25) { p.burnT -= 0.25; this.damage(p, BURN_DMG, p.burnBy, W.FLAMER, p.x, p.y, 0.3, true); }
     }
@@ -799,7 +807,7 @@ class Room {
     const m = this.map;
     this.ev.x.push([r2(x), r2(y), blast.r]);
     for (const p of this.players.values()) {
-      if (!p.alive || p.vehicle) continue;
+      if (!p.alive || !this.exposed(p)) continue;
       const d = Math.hypot(p.x - x, p.y - y);
       if (d >= blast.r + 0.4) continue;
       let dmg = blast.dmg * (1 - Math.max(0, d - 0.4) / blast.r);
@@ -811,7 +819,7 @@ class Room {
     // Сидящий внутри от взрыва рядом не страдает - погибнет, только если взорвётся сама машина.
     for (const v of [...this.vehicles.list.values()]) {
       if (v.dead || (skipVeh && v.id === skipVeh)) continue;
-      const d = KV.distToOBB(x, y, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const d = KV.distToOBB(x, y, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
       const reach = blast.r + 3;
       if (d >= reach) continue;
       if (d < blast.r) {
@@ -956,7 +964,7 @@ class Room {
     for (const n of this.npcs.list.values()) if (!n.veh && Math.abs(n.x - x) < 1.1 && Math.abs(n.y - y) < 1.1) return false;
     for (const v of this.vehicles.list.values()) {
       if (v.dead || Math.abs(v.x - x) > 3.2 || Math.abs(v.y - y) > 3.2) continue;
-      if (KV.distToOBB(x, y, v.x, v.y, v.a, CAR.HL, CAR.HW) < 1.0) return false;
+      if (KV.distToOBB(x, y, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw) < 1.0) return false;
     }
     for (const pk of this.pickups.values()) if (Math.abs(pk.x - x) < 0.9 && Math.abs(pk.y - y) < 0.9) return false;
     return !this.tileFires.has(k);

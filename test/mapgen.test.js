@@ -5,7 +5,7 @@ const KV = require('../public/shared.js');
 const { generateMap } = require('../game/mapgen');
 const { G, B } = KV;
 
-let worstReach = 1, totalMs = 0, minSpawns = Infinity, minBuildings = Infinity, cars = 0, waterMaps = 0;
+let worstReach = 1, totalMs = 0, minSpawns = Infinity, minBuildings = Infinity, cars = 0, waterMaps = 0, minMotos = Infinity, maxMotos = 0;
 for (let seed = 1; seed <= 60; seed++) {
   const t0 = process.hrtime.bigint();
   const m = generateMap(seed * 7919);
@@ -24,7 +24,9 @@ for (let seed = 1; seed <= 60; seed++) {
   minSpawns = Math.min(minSpawns, m.spawnTiles.length);
   minBuildings = Math.min(minBuildings, m.buildings.length);
   cars += m.carSpawns.length;
-  for (const c of m.carSpawns) assert.ok(!KV.carHitsHard(m, c.x, c.y, c.a, 0.05), "машина на парковке стоит в стене");
+  for (const c of m.carSpawns) assert.ok(!KV.carHitsHard(m, c.x, c.y, c.a, 0.05, false, c.moto ? KV.MOTO_BOX : null), "машина на парковке стоит в стене");
+  const motos = m.carSpawns.filter(c => c.moto).length;
+  minMotos = Math.min(minMotos, motos); maxMotos = Math.max(maxMotos, motos);
   for (let k = 0; k < w * h; k++) if (m.ground[k] === G.ROAD) assert.strictEqual(m.block[k], B.NONE, "дорога свободна для машин");
   for (const k of m.spawnTiles) assert.notStrictEqual(m.ground[k], G.ROAD, "не появляемся на дороге");
   for (const b of m.buildings) {
@@ -41,4 +43,6 @@ console.log(`карт: 60, средняя генерация ${(totalMs / 60).to
 assert.ok(worstReach > 0.97, 'слишком много недостижимых мест');
 assert.ok(minSpawns > 200, 'мало точек появления');
 assert.ok(minBuildings >= 6, 'мало домов');
+console.log(`мотоциклов на карте: от ${minMotos} до ${maxMotos}`);
+assert.ok(minMotos >= 4 && maxMotos <= 6, 'на каждой карте 4-6 мотоциклов (у больницы, у оружейного, на стоянках)');
 console.log('mapgen: OK');

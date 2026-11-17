@@ -419,6 +419,29 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     });
   });
 
+  // ---------- мотоциклы (17.11.2026): по два у больницы и у оружейного, ещё один-два на стоянках - всего 4-6 ----------
+  // стоят носом к улице на клетках 1x2, вокруг по клетке свободно, чтобы не загораживать проход
+  function placeMoto(tx, ty) {
+    if (!rectFree(tx - 1, ty - 1, 3, 4)) return false;
+    carSpawns.push({ x: tx + 0.5, y: ty + 1, a: -Math.PI / 2, color: ri(0, 7), moto: true });
+    carMask[I(tx, ty)] = 1; carMask[I(tx, ty + 1)] = 1;
+    return true;
+  }
+  let motos = 0;
+  for (const s of shops) {
+    if (s.kind !== 'med' && s.kind !== 'gun') continue;
+    let here = 0;
+    for (const dx of [4, -4, 5, -5, 6, -6, 7, -7]) {
+      if (here >= 2) break;
+      for (const dy of [-1, 0, 1, -2, 2]) if (placeMoto(Math.floor(s.x) + dx, Math.floor(s.y) + dy)) { here++; motos++; break; }
+    }
+  }
+  const lots = shuffle(cityBlocks.filter(b => b.kind === 'parking'));
+  for (const b of lots) {
+    if (motos >= 4 + (lots.length > 1 ? 2 : 1)) break;
+    for (let tries = 0; tries < 40; tries++) if (placeMoto(ri(b.x + 3, b.x + b.w - 4), ri(b.y + 3, b.y + b.h - 5))) { motos++; break; }
+  }
+
   // ---------- улицы: дороги свободны для машин с водителями; деревья и бочки на тротуарах ----------
   // углы у перекрёстков не загромождаем: там поворачивают машины с водителями
   const nearCross = (x, y, r) => {

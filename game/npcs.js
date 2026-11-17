@@ -152,7 +152,7 @@ class Npcs {
     let [nx, ny] = KV.moveCircle(this.map, n.x, n.y, dx * k, dy * k, KV.PLAYER_R);
     for (const v of this.room.vehicles.list.values()) {
       if (v.dead || Math.abs(v.x - nx) > 3 || Math.abs(v.y - ny) > 3) continue;
-      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (out) [nx, ny] = KV.pushOutSafe(this.map, n.x, n.y, out, 0, 0, KV.PLAYER_R);
     }
     const moved = Math.hypot(nx - n.x, ny - n.y);
@@ -467,7 +467,7 @@ class Npcs {
     for (const n of [...this.list.values()]) {
       if (!n.alive || n.veh) continue;
       const d = Math.hypot(n.x - x, n.y - y);
-      const near = body ? KV.distToOBB(n.x, n.y, body.x, body.y, body.a, CAR.HL, CAR.HW) : d;
+      const near = body ? KV.distToOBB(n.x, n.y, body.x, body.y, body.a, KV.boxOf(body).hl, KV.boxOf(body).hw) : d;
       if (near > BLAST_KILL && d >= blast.r + 0.4) continue;
       const los = geom.losClear(this.map, x, y, n.x, n.y, false);
       if (near <= BLAST_KILL && los) { this.damage(n, n.hp + 1, ownerId, weaponId, n.x, n.y); continue; }
@@ -491,7 +491,7 @@ class Npcs {
     const service = v.state === 'npc' && (v.kind === 'police' || v.kind === 'swat' || v.kind === 'tank' || v.kind === 'amb');
     for (const n of this.list.values()) {
       if (!n.alive || n.veh || Math.abs(n.x - v.x) > 3.2 || Math.abs(n.y - v.y) > 3.2) continue;
-      const out = KV.pushOutOBB(n.x, n.y, KV.PLAYER_R + 0.05, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(n.x, n.y, KV.PLAYER_R + 0.05, v.x, v.y, v.a, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (!out) continue;
       const spare = service && (v.kind === 'amb' || LAW.has(n.kind) || n.kind === K.MEDIC);
       if (!spare && speed > (v.kind === 'tank' ? 0.8 : 2.5)) {
@@ -505,7 +505,7 @@ class Npcs {
         const crew = v.crew && v.crew.length ? this.list.get(v.crew[0]) : null;
         const credit = v.driver || (crew ? NPC_ID - crew.kind : 0) || (now - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
         room.ev.ck.push([v.id, 0, r2(n.x), r2(n.y)]);
-        this.damage(n, v.kind === 'tank' ? 250 : Math.min(90, Math.max(12, speed * 6)), credit, -2, n.x, n.y);
+        this.damage(n, v.kind === 'tank' ? 250 : v.moto ? Math.min(55, Math.max(8, speed * 3.5)) : Math.min(90, Math.max(12, speed * 6)), credit, -2, n.x, n.y);
         if (v.state !== 'human' && v.kind !== 'tank') v.v *= 0.85;
       } else { const q = KV.pushOutSafe(this.map, n.x, n.y, out, 0, 0, KV.PLAYER_R); n.x = q[0]; n.y = q[1]; }
     }

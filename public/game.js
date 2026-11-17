@@ -884,6 +884,7 @@
   // Машина: a - курс (0 - на восток). Модель рисуется носом вверх, поэтому поворот a + 90°.
   function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine, kind, now, v) {
     if (kind === 4) { drawTank(x, y, a, st, fl, mine, now || performance.now(), v && v.tr !== undefined ? v.tr : a, v ? v.trk || 0 : 0); return; }
+    if (kind === 5) { drawMoto(x, y, a, colorIdx, st, fl, speed, mine, v); return; }
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(a + Math.PI / 2);
@@ -922,6 +923,58 @@
       if (Math.random() < 0.7) spawn('fire', hx + (Math.random() - 0.5) * 1.2, hy + (Math.random() - 0.5) * 1.2, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 0.8, 0.45, 0.42);
       if (Math.random() < 0.3) spawn('smoke', hx, hy, 1, '#333', 0.8, 1.8, 0.4);
     } else if (st >= 2 && Math.random() < (st === 3 ? 0.25 : 0.08)) spawn('smoke', hx, hy, 1, st === 3 ? '#3a3a3a' : '#666', 0.6, 1.6, 0.3);
+  }
+
+  // Мотоцикл: колёса, бак в цвет, сиденье, руль с зеркалами, фара. Водитель сидит сверху - его видно (и в него попадают).
+  function drawMoto(x, y, a, colorIdx, st, fl, speed, mine, v) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a + Math.PI / 2);
+    if (Math.abs(speed) > 1 && !(fl & 2)) {
+      const g = ctx.createLinearGradient(0, -1, 0, -5.5);
+      g.addColorStop(0, 'rgba(255,245,190,0.18)'); g.addColorStop(1, 'rgba(255,245,190,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(-0.15, -1.0); ctx.lineTo(0.15, -1.0); ctx.lineTo(1.1, -5.5); ctx.lineTo(-1.1, -5.5); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    roundRect(ctx, -0.26, -0.88, 0.7, 2.0, 0.3); ctx.fill();
+    ctx.fillStyle = '#141414';
+    roundRect(ctx, -0.12, -1.02, 0.24, 0.58, 0.11); ctx.fill();
+    roundRect(ctx, -0.15, 0.42, 0.3, 0.6, 0.13); ctx.fill();
+    ctx.fillStyle = '#3c3f44'; ctx.fillRect(-0.07, -0.62, 0.14, 1.2);
+    const body = CAR_COLORS[colorIdx] || '#888';
+    ctx.fillStyle = body; roundRect(ctx, -0.24, -0.64, 0.48, 0.64, 0.2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; roundRect(ctx, -0.12, -0.58, 0.12, 0.42, 0.06); ctx.fill();
+    ctx.fillStyle = '#1b1b1b'; roundRect(ctx, -0.18, 0.0, 0.36, 0.58, 0.12); ctx.fill();
+    ctx.fillStyle = body; roundRect(ctx, -0.16, 0.58, 0.32, 0.3, 0.1); ctx.fill();
+    ctx.fillStyle = fl & 1 ? '#ff2a2a' : '#a8241c'; ctx.fillRect(-0.09, 0.9, 0.18, fl & 1 ? 0.1 : 0.07);
+    if (st) { ctx.fillStyle = `rgba(0,0,0,${0.16 * st})`; roundRect(ctx, -0.24, -0.64, 0.48, 1.5, 0.2); ctx.fill(); }
+    if (mine) { ctx.strokeStyle = 'rgba(255,210,63,0.9)'; ctx.lineWidth = 0.06; roundRect(ctx, -0.32, -1.08, 0.64, 2.16, 0.26); ctx.stroke(); }
+    ctx.strokeStyle = '#26282c'; ctx.lineWidth = 0.08; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-0.4, -0.66); ctx.lineTo(0.4, -0.66); ctx.stroke();
+    ctx.fillStyle = '#9aa3ad'; ctx.beginPath(); ctx.arc(-0.44, -0.72, 0.07, 0, Math.PI * 2); ctx.arc(0.44, -0.72, 0.07, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff6c2'; ctx.beginPath(); ctx.arc(0, -0.95, 0.09, 0, Math.PI * 2); ctx.fill();
+    // водитель: руки на руле, плечи в цвет игрока, голова
+    const d = v && v.driver && !(v.fl & 4) ? S.players.get(v.driver) : null;
+    if (d) {
+      const col = d.color || '#fff';
+      ctx.strokeStyle = col; ctx.lineWidth = 0.13;
+      ctx.beginPath(); ctx.moveTo(-0.3, -0.02); ctx.lineTo(-0.36, -0.58); ctx.moveTo(0.3, -0.02); ctx.lineTo(0.36, -0.58); ctx.stroke();
+      ctx.fillStyle = '#d9a77c';
+      ctx.beginPath(); ctx.arc(-0.37, -0.64, 0.085, 0, Math.PI * 2); ctx.arc(0.37, -0.64, 0.085, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(0, 0.08, 0.44, 0.24, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = mine ? 0.09 : 0.05; ctx.strokeStyle = mine ? '#ffffff' : 'rgba(0,0,0,0.55)'; ctx.stroke();
+      ctx.fillStyle = '#2b1d14';
+      ctx.beginPath(); ctx.arc(0, 0.04, 0.22, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    if (d && (d.flags & 32)) burnFx(x, y);
+    const hx = x + Math.cos(a) * 0.3, hy = y + Math.sin(a) * 0.3;
+    if (fl & 2) {
+      if (Math.random() < 0.6) spawn('fire', hx + (Math.random() - 0.5) * 0.7, hy + (Math.random() - 0.5) * 0.7, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 0.7, 0.4, 0.34);
+      if (Math.random() < 0.25) spawn('smoke', hx, hy, 1, '#333', 0.7, 1.6, 0.34);
+    } else if (st >= 2 && Math.random() < (st === 3 ? 0.2 : 0.06)) spawn('smoke', hx, hy, 1, st === 3 ? '#3a3a3a' : '#666', 0.5, 1.4, 0.26);
   }
 
   // Полиция: чёрно-белая, мигалка красно-синяя; скорая: белая с красной полосой и крестом. Мигают, когда едут на вызов.
@@ -1923,7 +1976,7 @@
     for (const v of S.vehicles.values()) {
       if (v.fl & 2) continue;
       if (v.driver && v.driver !== S.myId) { const d = S.players.get(v.driver); if (d && !d.bot) continue; }
-      const dist = KV.distToOBB(S.me.x, S.me.y, v.rx, v.ry, v.ra, CAR.HL, CAR.HW);
+      const dist = KV.distToOBB(S.me.x, S.me.y, v.rx, v.ry, v.ra, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (dist <= bd) { bd = dist; best = v; }
     }
     return best;
@@ -1998,11 +2051,12 @@
         S.me.vehicle = m.id;
         S.car = { id: m.id, x: m.x, y: m.y, a: m.a, v: m.v || 0, sx: 0, sy: 0, tp: m.tp, thr: 0, kind: m.kind || 0 };
         // тяжёлая техника: своя скорость и разгон, танк давит кирпич - как на сервере
-        const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : null;
-        if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; }
+        const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : m.kind === 5 ? KV.VEH.moto : null;
+        if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; S.car.steer = hv.steer || 0; S.car.moto = m.kind === 5; }
         S.me.sprinting = false;
         if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
         else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
+        else if (m.kind === 5) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить. Сильный удар - вылетите' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Вас видно и можно подстрелить, от сильного удара вылетите', 3400);
         else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти');
         updateHud(true);
         break;
@@ -2028,6 +2082,7 @@
         // взрывная волна толкает и закручивает свою машину
         if (S.car) { S.car.sx += m.x; S.car.sy += m.y; if (m.w) S.car.w = clamp((S.car.w || 0) + m.w, -4, 4); if (!a11y('motion')) S.shake = Math.max(S.shake, 0.5); }
         break;
+      case 'fall': toast('Вы вылетели с мотоцикла!', 1800); break;
       case 'kb':
         S.me.kvx += m.x; S.me.kvy += m.y;
         if (m.roll) { S.me.rollUntil = performance.now() + KV.ROLL.TIME * 1000; S.me.rollAng = Math.atan2(m.y, m.x); S.me.sprinting = false; }
@@ -2125,7 +2180,7 @@
       for (const [id, x, y, a, v, st, color, fl, driver, hp, kind, tur] of m.c) {
         let c = S.vehicles.get(id);
         if (!c) { c = { id, snaps: [], rx: x, ry: y, ra: a }; S.vehicles.set(id, c); }
-        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0; c.tur = tur || 0;
+        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0; c.tur = tur || 0; c.moto = kind === 5;
         const last = c.snaps[c.snaps.length - 1];
         if (last && Math.hypot(last[1] - x, last[2] - y) > 12) c.snaps.length = 0;
         else if (last && m.ts > last[0]) {
@@ -2436,7 +2491,7 @@
     const v = me.vehicle ? S.vehicles.get(me.vehicle) : null;
     $('carBar').hidden = !v;
     if (v) {
-      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : 'Машина';
+      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : v.kind === 5 ? 'Мотоцикл' : 'Машина';
       $('carFill').style.width = clamp(v.hp, 0, 100) + '%';
       $('carText').textContent = v.fl & 2 ? what + ' горит!' : what + ' ' + Math.round(v.hp) + '%';
     }
@@ -2473,7 +2528,8 @@
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
-      hint.innerHTML = me.vehicle ? '<b>F</b> - выйти · <b>H</b> - гудок' : '<b>F</b> - сесть в машину';
+      hint.innerHTML = me.vehicle ? (S.car && S.car.kind === 5 ? '<b>F</b> - слезть · <b>H</b> - гудок' : '<b>F</b> - выйти · <b>H</b> - гудок')
+        : car && car.kind === 5 ? '<b>F</b> - сесть на мотоцикл' : '<b>F</b> - сесть в машину';
     } else hint.hidden = true;
     if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? `Возрождение через ${me.respawnIn.toFixed(1)} с` : 'Возрождение...';
   }
@@ -2655,7 +2711,7 @@
       g.translate(toX(vx), toY(vy));
       g.rotate(va);
       g.fillStyle = v.fl & 2 ? '#ff7a1a' : v.kind === 4 ? '#556b2f' : v.kind === 3 ? '#1c2233' : CAR_COLORS[v.color] || '#888';
-      const L = Math.max(4 * u, CAR.HL * 2 * k), Wd = Math.max(2 * u, CAR.HW * 2 * k);
+      const vb = KV.boxOf(v), L = Math.max((v.moto ? 2.6 : 4) * u, vb.hl * 2 * k), Wd = Math.max((v.moto ? 1.3 : 2) * u, vb.hw * 2 * k);
       g.fillRect(-L / 2, -Wd / 2, L, Wd);
       g.strokeStyle = v.driver && !(v.fl & 4) ? '#ffffff' : 'rgba(0,0,0,0.7)';
       g.lineWidth = Math.max(1, u * 0.8);
@@ -3051,10 +3107,11 @@
     for (const o of S.vehicles.values()) {
       if (o.id === car.id || now - o.seen > 600) continue;
       if (Math.abs(o.rx - car.x) > 4.6 || Math.abs(o.ry - car.y) > 4.6) continue;
-      const other = { x: o.rx, y: o.ry, a: o.ra };
+      const other = { x: o.rx, y: o.ry, a: o.ra, moto: o.moto };
+      const cb = KV.boxOf(car), ob = KV.boxOf(o);
       // свой танк: машина, которую он задел, взрывается (это решает сервер), сам танк от неё не отскакивает
       if (car.kind === 4 && o.kind !== 4) {
-        if (KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, CAR.HL, CAR.HW) && now - (S.ramAt.get(o.id) || 0) > 400) {
+        if (KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, cb.hl, cb.hw, ob.hl, ob.hw) && now - (S.ramAt.get(o.id) || 0) > 400) {
           S.ramAt.set(o.id, now);
           const od2 = o.driver ? S.players.get(o.driver) : null;
           if (od2 && !od2.bot && !(o.fl & 4)) send({ t: 'ram', id: o.id, s: 1 }); // машина другого игрока
@@ -3064,7 +3121,7 @@
       const ovx = o.vx || 0, ovy = o.vy || 0;
       let isStatic = false;
       if (o.fl & 4) {
-        const mtv = KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, CAR.HL, CAR.HW);
+        const mtv = KV.obbObbMTV(car.x, car.y, car.a, other.x, other.y, other.a, cb.hl, cb.hw, ob.hl, ob.hw);
         if (mtv) {
           const ml = Math.hypot(mtv[0], mtv[1]) || 1;
           const rel = ((Math.cos(car.a) * car.v + car.sx - ovx) * mtv[0] + (Math.sin(car.a) * car.v + car.sy - ovy) * mtv[1]) / ml;
@@ -3102,7 +3159,7 @@
     // машины - препятствие
     for (const v of S.vehicles.values()) {
       if (Math.abs(v.rx - nx) > 3 || Math.abs(v.ry - ny) > 3) continue;
-      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.rx, v.ry, v.ra, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.rx, v.ry, v.ra, KV.boxOf(v).hl, KV.boxOf(v).hw);
       if (out) [nx, ny] = KV.collideCircle(S.map, out[0], out[1], KV.PLAYER_R);
     }
     const moved = Math.hypot(nx - me.x, ny - me.y);
@@ -3210,8 +3267,8 @@
   function updateEngines() {
     const list = [];
     // танк гудит ниже и громче
-    const tk4 = S.car && S.car.kind === 4;
-    if (S.me.vehicle && S.car) list.push({ freq: (tk4 ? 24 : 42) + Math.abs(S.car.v) * (tk4 ? 4 : 7) + (S.car.thr > 0 ? 12 : 0), gain: (tk4 ? 0.09 : 0.05) + Math.min(0.07, Math.abs(S.car.v) * 0.005) + (S.car.thr ? 0.02 : 0) });
+    const tk4 = S.car && S.car.kind === 4, mt5 = S.car && S.car.kind === 5;
+    if (S.me.vehicle && S.car) list.push({ freq: (tk4 ? 24 : mt5 ? 58 : 42) + Math.abs(S.car.v) * (tk4 ? 4 : 7) + (S.car.thr > 0 ? (mt5 ? 18 : 12) : 0), gain: (tk4 ? 0.09 : 0.05) + Math.min(0.07, Math.abs(S.car.v) * 0.005) + (S.car.thr ? 0.02 : 0) });
     else list.push(null);
     const near = [];
     for (const v of S.vehicles.values()) {
@@ -3223,7 +3280,7 @@
     for (let i = 0; i < 2; i++) {
       const n = near[i];
       const t4 = n && n.v.kind === 4;
-      list.push(n ? { freq: (t4 ? 24 : 38) + Math.abs(n.v.v) * (t4 ? 4 : 6), gain: (t4 ? 0.08 : 0.045) * Math.pow(1 - n.d / 24, 1.5) } : null);
+      list.push(n ? { freq: (t4 ? 24 : n.v.kind === 5 ? 54 : 38) + Math.abs(n.v.v) * (t4 ? 4 : 6), gain: (t4 ? 0.08 : 0.045) * Math.pow(1 - n.d / 24, 1.5) } : null);
     }
     Sound.engines(list);
   }
@@ -3320,7 +3377,7 @@
       v.drawnAt = now; // для проверки «каждого стрелка видно»
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
-        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - 2.4, hp: 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
+        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - (v.kind === 5 ? 1.3 : 2.4), hp: v.kind === 5 ? (v.driver === S.myId ? S.me.hp : d.hp) : 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
       }
     }
 
