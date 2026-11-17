@@ -273,7 +273,7 @@
         setTimeout(() => { if (loopsOn.get(key) === l) loopsOn.delete(key); }, 650);
       }
     }
-    let stepAlt = 0, tripOut = null;
+    let stepAlt = 0, tripOut = null, placeAt = 0;
     return {
       init,
       get on() { return on; },
@@ -302,6 +302,14 @@
       },
       glass(x, y) { if (sample('glass', { x, y, gain: 0.6 })) return; burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
       wood(x, y) { burst({ dur: 0.18, freq: 700, q: 1.5, gain: 0.35, x, y }); },
+      // дом чинится: глухой стук кирпича, у стекла - звонкий; не чаще 7 раз в секунду
+      place(x, y, glass) {
+        const t = performance.now();
+        if (t - placeAt < 140) return;
+        placeAt = t;
+        if (glass) tone({ freq: 1800, dur: 0.08, gain: 0.05, type: 'triangle', x, y });
+        else { burst({ dur: 0.09, freq: 520, q: 1.4, gain: 0.22, type: 'lowpass', x, y }); tone({ freq: 140, dur: 0.07, gain: 0.08, x, y }); }
+      },
       brick(x, y) { burst({ dur: 0.45, freq: 420, q: 0.6, gain: 0.45, type: 'lowpass', x, y, sweep: 120 }); },
       hit() { tone({ freq: 1400, dur: 0.05, gain: 0.15, type: 'square' }); },
       hurt() { if (sample(pick(PAIN), { gain: 0.85 })) return; tone({ freq: 220, dur: 0.15, gain: 0.22, type: 'sawtooth', slide: 110 }); },
@@ -2094,7 +2102,7 @@
     }
     if (m.x) for (const [x, y, r] of m.x) explosionEffect(x, y, r);
     if (m.tl) for (const [k, block, st, ground, destroyed] of m.tl) {
-      const x = k % map.w, y = Math.floor(k / map.w);
+      const x = k % map.w, y = Math.floor(k / map.w), was = map.block[k];
       map.block[k] = block; map.dmg[k] = st; map.ground[k] = ground;
       if (!block) S.tileFires.delete(k);
       S.rammed.delete(k);
@@ -2107,10 +2115,16 @@
         if (destroyed === B.GLASS) Sound.glass(x, y);
         else if (destroyed === B.BRICK || destroyed === B.CONCRETE) Sound.brick(x, y);
         else if (destroyed !== B.CAR && destroyed !== B.BARREL) Sound.wood(x, y);
+      } else if (!was && (block === B.BRICK || block === B.GLASS)) {
+        // дом чинится: кирпич (или стекло) встал на место - облачко пыли и стук
+        spawn('dust', x + 0.5, y + 0.5, 5, '#a89a8a', 1.2, 1.0, 0.3);
+        Sound.place(x + 0.5, y + 0.5, block === B.GLASS);
       } else {
         spawn('dust', x + 0.5, y + 0.5, 1, '#9a8f84', 0.5, 0.8, 0.18);
       }
     }
+    // дом снова целый - крыша на месте
+    if (m.rr) for (const id of m.rr) { const b = map.buildings[id]; if (b) b.roof = true; }
     if (m.rf) for (const id of m.rf) {
       const b = map.buildings[id];
       if (!b) continue;

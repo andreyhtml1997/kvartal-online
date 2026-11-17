@@ -21,6 +21,8 @@ const MAX_PICKUPS = 48;
 const CAR_BULLET = 0.6;         // пули по машине - доля урона по человеку (как было до 17.11: сильнее - машины слишком хрупкие)
 const HELI_BULLET = 1;          // пули по вертолёту - доля урона по человеку (сбить: ~25 попаданий из автомата)
 const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
+const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
+const REBUILD_EVERY = 9;        // тактов между кирпичами одного дома (0.3 с)
 const PICKUP_LIFE = 120;        // с
 const PRESS_LATCH = 0.3;        // с: нажатие во время перезарядки стреляет, только если она кончится за это время
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
@@ -42,7 +44,8 @@ function emptyEvents() {
     b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
     en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: [],
     nh: [], nk: [], rv: [], ws: [], // жители: попадание, смерть, вылечен; звёзды розыска игрока
-    hf: [], hx: [] // вертолёт сбит (падает); вертолёт исчез (разбился или улетел)
+    hf: [], hx: [], // вертолёт сбит (падает); вертолёт исчез (разбился или улетел)
+    rr: [] // дом снова целый - вернулась крыша
   };
 }
 
@@ -67,6 +70,7 @@ class Room {
     this.nextShroomAt = 12;
     this.tileFires = new Map();   // горящие деревянные клетки: k -> { until, by, next }
     this.crates = this.map.crates;
+    this.initRebuild();
     this.ev = emptyEvents();
     this.emptySince = Date.now();
     this.sbDirty = true;
@@ -297,6 +301,16 @@ class Room {
             break;
           }
         }
+        if (msg.wall) {
+          // ближайший дом: выбить 6 кирпичей и разрешить ремонт сразу (без минуты ожидания) - проверка в браузере
+          const mp = this.map;
+          let hb = null, hd = 1e9;
+          for (const q of mp.buildings) { const d = Math.hypot(q.x + q.w / 2 - p.x, q.y + q.h / 2 - p.y); if (d < hd && q.orig && q.orig.length > 12) { hd = d; hb = q; } }
+          if (hb) {
+            for (const e of hb.orig.filter(q => q[1] === B.BRICK && mp.block[q[0]] === B.BRICK).slice(0, 6)) this.destroyTile(e[0], 0);
+            hb.hitAt = this.time - REBUILD_DELAY;
+          }
+        }
         if (msg.heli) {
           // вертолёт сразу рядом (для проверки); без розыска от 4 звёзд он улетит
           const h = this.npcs.spawnHeli(p);
@@ -380,6 +394,7 @@ class Room {
     this.updateBurning();
     this.updateTileFires();
     this.updatePending();
+    if (this.tickNo % REBUILD_EVERY === 0) this.updateRebuild();
     this.updatePickups();
     this.updateCrates();
     for (const p of this.players.values()) if (!p.alive && this.time >= p.respawnAt) this.spawn(p);
@@ -751,6 +766,7 @@ class Room {
     if (t === B.NONE || t === B.BORDER) return;
     const dmg = amount * mult;
     if (!(dmg > 0)) return;
+    if (m.owner[k] >= 0) { const hb = m.buildings[m.owner[k]]; hb.hitAt = this.time; hb.whole = false; } // по дому бьют - ремонт ждёт
     const info = BLOCKS[t];
     const before = m.hp[k];
     m.hp[k] -= dmg;
@@ -766,6 +782,7 @@ class Room {
     const m = this.map;
     const t = m.block[k];
     if (t === B.NONE || t === B.BORDER) return;
+    if (m.owner[k] >= 0) { const hb = m.buildings[m.owner[k]]; hb.hitAt = this.time; hb.whole = false; }
     const info = BLOCKS[t];
     m.block[k] = B.NONE; m.hp[k] = 0; m.dmg[k] = 0;
     if (info.rubble !== undefined) m.ground[k] = info.rubble;
@@ -794,6 +811,74 @@ class Room {
     if (!b || !b.roof) return;
     b.roof = false;
     this.ev.rf.push(b.id);
+  }
+
+  // ---------- дома чинятся сами ----------
+  // Запоминаем, где у каждого дома были кирпичные стены и окна (двери - проёмы, их не закладываем)
+  initRebuild() {
+    const m = this.map;
+    for (const b of m.buildings) {
+      b.orig = [];
+      b.hitAt = -1e9;
+      for (let y = b.y; y < b.y + b.h; y++) {
+        for (let x = b.x; x < b.x + b.w; x++) {
+          const k = y * m.w + x;
+          if (m.owner[k] === b.id && (m.block[k] === B.BRICK || m.block[k] === B.GLASS)) b.orig.push([k, m.block[k], m.ground[k]]);
+        }
+      }
+    }
+  }
+  // Через минуту без урона дом чинится по кирпичику: раз в 0.3 с одна клетка (сначала рядом с уцелевшей стеной),
+  // потом зарастают трещины; дом снова целый - возвращается крыша. Туда, где стоит человек или машина, лежит тело
+  // или вещь, кирпич не встаёт - ждёт, пока место освободится (никого не замуровывает).
+  updateRebuild() {
+    const m = this.map, now = this.time;
+    for (const b of m.buildings) {
+      if (!b.orig || b.whole || now - b.hitAt < REBUILD_DELAY) continue;
+      let best = null, bestScore = -1, crack = null, missing = 0;
+      for (const e of b.orig) {
+        const k = e[0], cur = m.block[k];
+        if (cur === e[1]) { if (m.dmg[k] && !crack) crack = e; continue; }
+        if (cur !== B.NONE) continue; // на месте стены что-то другое - не трогаем
+        missing++;
+        const x = k % m.w, y = (k / m.w) | 0;
+        let score = Math.random() * 0.5;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nb = m.block[(y + dy) * m.w + x + dx];
+          if (nb === B.BRICK || nb === B.GLASS) score += 1;
+        }
+        if (score > bestScore && this.tileFree(k)) { bestScore = score; best = e; }
+      }
+      if (best) this.restoreTile(b, best[0], best[1], best[2]);
+      else if (crack) { const k = crack[0]; m.hp[k] = BLOCKS[crack[1]].hp; m.dmg[k] = 0; this.ev.tl.push([k, crack[1], 0, m.ground[k]]); }
+      else if (!missing) {
+        b.whole = true;
+        b.destroyed = 0;
+        if (!b.roof) { b.roof = true; this.ev.rr.push(b.id); }
+      }
+    }
+  }
+  restoreTile(b, k, t, g) {
+    const m = this.map;
+    m.block[k] = t; m.hp[k] = BLOCKS[t].hp; m.dmg[k] = 0; m.ground[k] = g;
+    if (t === B.BRICK) b.destroyed = Math.max(0, b.destroyed - 1);
+    this.ev.tl.push([k, t, 0, g]);
+  }
+  // можно ли поставить на клетку стену: никого и ничего рядом (у живых игроков - с запасом на задержку сети)
+  tileFree(k) {
+    const m = this.map, x = (k % m.w) + 0.5, y = ((k / m.w) | 0) + 0.5;
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const r = p.isBot ? 1.0 : 1.6;
+      if (Math.abs(p.x - x) < r && Math.abs(p.y - y) < r) return false;
+    }
+    for (const n of this.npcs.list.values()) if (!n.veh && Math.abs(n.x - x) < 1.1 && Math.abs(n.y - y) < 1.1) return false;
+    for (const v of this.vehicles.list.values()) {
+      if (v.dead || Math.abs(v.x - x) > 3.2 || Math.abs(v.y - y) > 3.2) continue;
+      if (KV.distToOBB(x, y, v.x, v.y, v.a, CAR.HL, CAR.HW) < 1.0) return false;
+    }
+    for (const pk of this.pickups.values()) if (Math.abs(pk.x - x) < 0.9 && Math.abs(pk.y - y) < 0.9) return false;
+    return !this.tileFires.has(k);
   }
 
   updatePending() {
