@@ -57,7 +57,7 @@
   ];
   // Что и как часто появляется на карте
   const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12], [W.FLAMER, 11], [W.SAW, 11]];
-  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4 };
+  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4, STAR: 5 }; // STAR - звезда погашения розыска
   const TRIP = 10;                          // с: сколько действует съеденный гриб
   const ROLL = { SPEED: 7.5, TIME: 1.0 };  // выпрыгнул из машины быстрее SPEED м/с - катится по дороге TIME секунд
   // пустой набор оружия: кулаки есть всегда, остального нет (-1)
@@ -208,6 +208,14 @@
       nlx = lx; nly = (ly >= 0 ? 1 : -1) * (hw + r + 1e-3);
     }
     return [cx + nlx * c - nly * s, cy + nlx * s + nly * c];
+  }
+
+  // Человека вытолкнуло из машины в точку out: если она в стене (машина прижала к забору) - сдвигаем от прежнего места,
+  // со скольжением вдоль стен, чтобы не пролететь сквозь препятствие
+  function pushOutSafe(map, x0, y0, out, dx, dy, r) {
+    let q = moveCircle(map, out[0], out[1], dx || 0, dy || 0, r);
+    if (!circleFree(map, q[0], q[1], r * 0.9)) q = moveCircle(map, x0, y0, out[0] - x0 + (dx || 0), out[1] - y0 + (dy || 0), r);
+    return q;
   }
 
   function distToOBB(x, y, cx, cy, a, hl, hw) {
@@ -441,7 +449,7 @@
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
     G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
-    obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
+    obbTileMTV, obbObbMTV, pushOutOBB, pushOutSafe, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     applyImpulse, carContactPoint, carCollide,
     damageStage, rleEncode, rleDecode
   };

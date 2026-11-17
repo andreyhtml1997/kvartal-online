@@ -37,6 +37,7 @@
         <div class="bar ar" aria-label="Броня"><span id="arFill"></span><b id="arText">Броня 0</b></div>
         <div class="bar st" aria-label="Выносливость"><span id="stFill"></span><b id="stText">Выносливость</b></div>
         <div class="bar car" id="carBar" aria-label="Машина" hidden><span id="carFill"></span><b id="carText">Машина</b></div>
+        <div id="stars" class="stars" role="img" aria-label="Розыск: нет" hidden><i>★</i><i>★</i><i>★</i><i>★</i><i>★</i></div>
         <ol id="miniBoard" aria-label="Счёт игроков"></ol>
       </div>
       <div class="hud-btns">
@@ -103,7 +104,7 @@
       <div class="board-card">
         <div class="board-head"><strong>Счёт</strong><span id="boardRoom"></span></div>
         <table>
-          <thead><tr><th>Игрок</th><th>Убийств</th><th>Смертей</th></tr></thead>
+          <thead><tr><th>Игрок</th><th>Убийств</th><th>Смертей</th><th>Мирные</th><th>Полиция</th></tr></thead>
           <tbody id="boardBody"></tbody>
         </table>
         <button type="button" id="btnBoardClose" class="btn small">Закрыть</button>

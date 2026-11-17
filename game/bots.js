@@ -201,7 +201,7 @@ class Bots {
     for (const v of room.vehicles.list.values()) {
       if (v.dead || Math.abs(v.x - nx) > 3 || Math.abs(v.y - ny) > 3) continue;
       const out = KV.pushOutOBB(nx, ny, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
-      if (out) [nx, ny] = KV.collideCircle(room.map, out[0], out[1], KV.PLAYER_R);
+      if (out) [nx, ny] = KV.pushOutSafe(room.map, p.x, p.y, out, 0, 0, KV.PLAYER_R);
     }
     const moved = Math.hypot(nx - p.x, ny - p.y);
     if (len > 0.1 && moved < BOT_SPEED * dt * 0.2) {
@@ -220,6 +220,13 @@ class Bots {
       if (d >= bestD) continue;
       if (!geom.losClear(room.map, p.x, p.y, o.x, o.y, true)) continue;
       best = o; bestD = d;
+    }
+    // житель, который напал на этого бота (прохожий отстреливается, полицейский)
+    for (const n of room.npcs.list.values()) {
+      if (!n.alive || n.veh || n.state !== 'fight' || n.target !== p.id) continue;
+      const d = Math.hypot(n.x - p.x, n.y - p.y);
+      if (d >= bestD || !geom.losClear(room.map, p.x, p.y, n.x, n.y, true)) continue;
+      best = n; bestD = d;
     }
     if (best) {
       if (best !== ai.target) {

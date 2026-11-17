@@ -10,6 +10,7 @@ const { generateMap } = require('./mapgen');
 const geom = require('./geom');
 const { Bots } = require('./bots');
 const { Vehicles } = require('./vehicles');
+const { Npcs } = require('./npcs');
 const { G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, STAMINA } = KV;
 
 const DT = 1 / KV.TICK_RATE;
@@ -36,7 +37,8 @@ function emptyEvents() {
   // vx - взорвалась, fl - водитель убегает; tf/tfx - деревянная клетка загорелась/погасла
   return {
     b: [], be: [], x: [], tl: [], rf: [], k: [], hu: [], pa: [], pr: [], pu: [], pj: [], pl: [], sp: [], m: [],
-    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: []
+    en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: [],
+    nh: [], nk: [], rv: [], ws: [] // жители: попадание, смерть, вылечен; звёзды розыска игрока
   };
 }
 
@@ -67,6 +69,8 @@ class Room {
     this.botsOn = true;           // переключатель «Боты» под шестерёнкой, на всю комнату
     this.bots = new Bots(this);
     this.vehicles = new Vehicles(this);
+    this.npcs = new Npcs(this);
+    this.nextStarAt = 4;
     this.fillBots();
   }
 
@@ -86,13 +90,13 @@ class Room {
       kills: 0, deaths: 0, prot: 0, tp: 0, budget: 0, lastMoveTime: 0, shotAt: -10,
       view: [24, 16], ai: null, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprint: false, hornAt: -10,
       rollUntil: 0, rollVx: 0, rollVy: 0, burnUntil: 0, burnBy: 0, burnT: 0, tripUntil: 0,
-      voice: false, talkUntil: 0, vWin: 0, vCount: 0
+      voice: false, talkUntil: 0, vWin: 0, vCount: 0, heat: 0, stars: 0, civKills: 0, copKills: 0
     };
     this.players.set(p.id, p);
     return p;
   }
 
-  publicInfo(p) { return [p.id, p.name, p.color, p.isBot ? 1 : 0, p.kills, p.deaths]; }
+  publicInfo(p) { return [p.id, p.name, p.color, p.isBot ? 1 : 0, p.kills, p.deaths, p.civKills || 0, p.copKills || 0]; }
 
   addHuman(ws, name) {
     if (this.humanCount() >= MAX_HUMANS) return null;
@@ -236,6 +240,7 @@ class Room {
         if (process.env.KV_DEBUG !== '1') break;
         if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
         if (msg.god) p.prot = this.time + 600;
+        if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
         if (msg.shroom) {
           const spot = [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2], [0, 0]].find(([dx, dy]) => KV.circleFree(this.map, p.x + dx, p.y + dy, KV.PLAYER_R));
           this.addPickup(PK.SHROOM, 0, p.x + spot[0], p.y + spot[1], 1);
@@ -334,6 +339,7 @@ class Room {
     this.tickNo++;
     for (const p of this.players.values()) if (p.isBot && !p.vehicle) this.bots.update(p, DT);
     this.vehicles.update(DT);
+    this.npcs.update(DT);
     this.updateStamina();
     for (const p of this.players.values()) this.updateFiring(p);
     this.updateBullets();
@@ -384,30 +390,34 @@ class Room {
     p.prot = 0; // стрельба снимает защиту после появления
     p.shotAt = this.time;
     if (!p.isBot && w.id !== W.FISTS) this.recentShots.push({ x: p.x, y: p.y, t: this.time });
+    // выстрел пугает прохожих рядом
+    if (w.id !== W.FISTS && this.time - (p.noiseAt || 0) > 0.4) { p.noiseAt = this.time; this.npcs.noise(p.x, p.y, w.melee ? 5 : 11); }
     if (w.melee) {
       if (w.saw) { p.ammo[p.cur]--; if (p.ammo[p.cur] <= 0) p.cur = this.bestWeapon(p); } // пила тратит бензин
       this.melee(p, w);
       return;
     }
     p.ammo[p.cur]--;
-    const n = w.pellets || 1;
-    // из машины пуля вылетает из окна, а не из центра машины
+    // из машины пуля вылетает из окна, огонь - из сопла огнемёта
     const off = p.vehicle ? 0.6 : w.flame ? 0.75 : 0;
-    const ox = Math.cos(p.a) * off, oy = Math.sin(p.a) * off;
+    this.spawnShot(p.x + Math.cos(p.a) * off, p.y + Math.sin(p.a) * off, p.a, w, p.id, p.vehicle || 0, p.aimD, 0);
+    if (p.ammo[p.cur] <= 0) p.cur = this.bestWeapon(p);
+  }
+
+  // Пули одного выстрела (у дробовика - веер). ownerId - игрок; у жителей - отрицательный (-100 - вид), npcId - кто именно
+  spawnShot(x, y, a, w, ownerId, vehId, aimD, npcId) {
+    const n = w.pellets || 1;
     for (let i = 0; i < n; i++) {
-      const ang = n > 1
-        ? p.a + (i / (n - 1) - 0.5) * w.spread + (Math.random() - 0.5) * 0.05
-        : p.a + (Math.random() - 0.5) * 2 * w.spread;
+      const ang = n > 1 ? a + (i / (n - 1) - 0.5) * w.spread + (Math.random() - 0.5) * 0.05 : a + (Math.random() - 0.5) * 2 * w.spread;
       // граната летит до прицела (не ближе 2.5 м), пули - на всю дальность
-      const reach = w.grenade && p.aimD > 1 ? Math.max(2.5, Math.min(w.range, p.aimD)) : w.range;
+      const reach = w.grenade && aimD > 1 ? Math.max(2.5, Math.min(w.range, aimD)) : w.range;
       const b = {
-        id: this.nextBullet++, owner: p.id, veh: p.vehicle || 0, w: w.id, x: p.x + ox, y: p.y + oy,
+        id: this.nextBullet++, owner: ownerId, npc: npcId || 0, veh: vehId || 0, w: w.id, x, y,
         dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: reach, range: reach, dead: false, flame: !!w.flame, hit: null
       };
       this.bullets.push(b);
-      this.ev.b.push([b.id, w.id, r2(b.x), r2(b.y), r3(ang), p.id]);
+      this.ev.b.push([b.id, w.id, r2(x), r2(y), r3(ang), ownerId]);
     }
-    if (p.ammo[p.cur] <= 0) p.cur = this.bestWeapon(p);
   }
 
   melee(p, w) {
@@ -423,6 +433,8 @@ class Room {
       target = o; bestD = d;
     }
     if (target) { this.damage(target, w.dmg, p.id, w.id, target.x, target.y); return; }
+    const nt = this.npcs.meleeTarget(p, w.range);
+    if (nt) { this.npcs.damage(nt, w.dmg, p.id, w.id, nt.x, nt.y); return; }
     const reach = KV.PLAYER_R + (w.saw ? 0.75 : 0.45);
     // пила режет и машины
     if (w.saw) {
@@ -451,14 +463,18 @@ class Room {
         const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
         if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
       }
+      // жители города
+      let npcT = null;
+      const nh = this.npcs.rayHit(b, step, tBest);
+      if (nh) { tBest = nh.t; npcT = nh.n; target = null; }
       for (const v of this.vehicles.list.values()) {
         if (v.dead || v.id === b.veh) continue;
         if (Math.abs(v.x - b.x) > step + 3 || Math.abs(v.y - b.y) > step + 3) continue;
         const t = geom.rayOBB(b.x, b.y, b.dx, b.dy, v.x, v.y, v.a, CAR.HL, CAR.HW);
-        if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; }
+        if (t >= 0 && t <= step && t < tBest) { tBest = t; car = v; target = null; npcT = null; }
       }
       const w = WEAPONS[b.w];
-      if (target || car || (hitT && hitT.t <= step)) {
+      if (target || car || npcT || (hitT && hitT.t <= step)) {
         const back = w.grenade ? 0.08 : 0;
         const hx = b.x + b.dx * Math.max(0, tBest - back), hy = b.y + b.dy * Math.max(0, tBest - back);
         b.dead = true;
@@ -468,6 +484,9 @@ class Room {
         if (target) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
           this.damage(target, w.dmg * fall, b.owner, w.id, hx, hy);
+        } else if (npcT) {
+          this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
+          this.npcs.damage(npcT, w.dmg * fall, b.owner, w.id, hx, hy);
         } else if (car) {
           // по машине пули бьют сильно; сидящего внутри пулей не убить - только взорвав машину
           this.ev.be.push([b.id, r2(hx), r2(hy), 4]);
@@ -501,6 +520,15 @@ class Room {
       (b.hit || (b.hit = new Set())).add(p.id);
       this.damage(p, w.dmg, b.owner, w.id, p.x, p.y, 0.6, true);
       this.ignite(p, b.owner, w.burn);
+    }
+    for (const n of this.npcs.list.values()) {
+      if (!n.alive || n.veh || n.id === b.npc || (b.hitN && b.hitN.has(n.id))) continue;
+      if (Math.abs(n.x - b.x) > step + 1 || Math.abs(n.y - b.y) > step + 1) continue;
+      const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, n.x, n.y, 0.65);
+      if (t < 0 || t > step || t > tWall) continue;
+      (b.hitN || (b.hitN = new Set())).add(n.id);
+      this.npcs.damage(n, w.dmg, b.owner, w.id, n.x, n.y, { silent: true });
+      this.npcs.ignite(n, b.owner, w.burn);
     }
     let car = null, tCar = Infinity;
     for (const v of this.vehicles.list.values()) {
@@ -584,6 +612,7 @@ class Room {
 
   kill(t, attackerId, weaponId) {
     if (t.vehicle) this.vehicles.exit(t, true);
+    if (!t.isBot) this.npcs.playerDied(t); // смерть гасит все звёзды розыска
     t.alive = false; t.hp = 0; t.deaths++;
     t.fire = false; t.fireLatch = false; t.sprint = false; t.burnUntil = 0; t.rollUntil = 0; t.tripUntil = 0;
     t.respawnAt = this.time + KV.RESPAWN_DELAY;
@@ -605,6 +634,7 @@ class Room {
       if (!geom.losClear(m, x, y, p.x, p.y, false)) dmg *= 0.4;
       this.damage(p, dmg, ownerId, weaponId, p.x, p.y);
     }
+    this.npcs.explode(x, y, blast, ownerId, weaponId);
     // Машины: урон (ракета поджигает сразу), взрывная волна отбрасывает все машины вокруг.
     // Сидящий внутри от взрыва рядом не страдает - погибнет, только если взорвётся сама машина.
     for (const v of [...this.vehicles.list.values()]) {
@@ -775,8 +805,9 @@ class Room {
   // ---------- оружие на карте ----------
   addPickup(kind, w, x, y, amount) {
     if (this.pickups.size >= MAX_PICKUPS) {
-      const oldest = this.pickups.values().next().value;
-      this.removePickup(oldest.id);
+      let oldest = null;
+      for (const pk of this.pickups.values()) if (pk.kind !== PK.STAR) { oldest = pk; break; }
+      if (oldest) this.removePickup(oldest.id);
     }
     const pk = { id: this.nextPickup++, kind, w, x, y, amount, born: this.time };
     this.pickups.set(pk.id, pk);
@@ -832,6 +863,13 @@ class Room {
       if (spot) this.addPickup(Math.random() < 0.55 ? PK.HEALTH : PK.ARMOR, 0, spot[0], spot[1], 50);
       this.nextSupplyAt = this.time + 10 + Math.random() * 6;
     }
+    // звёзды погашения розыска: всегда три на карте, подобрали - через 25-45 с новая в другом месте
+    if (this.time >= this.nextStarAt) {
+      let n = 0;
+      for (const pk of this.pickups.values()) if (pk.kind === PK.STAR) n++;
+      if (n < 3) { const spot = this.randomPickupSpot(15); if (spot) this.addPickup(PK.STAR, 0, spot[0], spot[1], 1); }
+      this.nextStarAt = this.time + (n < 2 ? 2 : 25 + Math.random() * 20);
+    }
     // грибы: до трёх на карте, вырастают где попало
     if (this.time >= this.nextShroomAt) {
       this.nextShroomAt = this.time + 18 + Math.random() * 18;
@@ -840,7 +878,7 @@ class Room {
       if (n < 3) { const spot = this.randomPickupSpot(6); if (spot) this.addPickup(PK.SHROOM, 0, spot[0], spot[1], 1); }
     }
     for (const pk of [...this.pickups.values()]) {
-      if (this.time - pk.born > PICKUP_LIFE) { this.removePickup(pk.id); continue; }
+      if (pk.kind !== PK.STAR && this.time - pk.born > PICKUP_LIFE) { this.removePickup(pk.id); continue; }
       for (const p of this.players.values()) {
         if (!p.alive) continue;
         const r = p.vehicle ? 1.7 : 0.85;
@@ -864,6 +902,10 @@ class Room {
       p.ammo[pk.w] = Math.min(w.max, p.ammo[pk.w] + (pk.amount || w.box));
     } else if (pk.kind === PK.SHROOM) {
       p.tripUntil = this.time + KV.TRIP;
+      p.hp = Math.min(KV.MAX_HP, p.hp + 50); // гриб лечит, как аптечка
+    } else if (pk.kind === PK.STAR) {
+      if (!(p.stars > 0) || p.isBot) return false; // без розыска звезда лежит дальше
+      this.npcs.starPicked(p);
     } else if (pk.kind === PK.HEALTH) {
       if (p.hp >= KV.MAX_HP) return false;
       p.hp = Math.min(KV.MAX_HP, p.hp + (pk.amount || 50));
@@ -907,8 +949,8 @@ class Room {
         c.push(this.vehicles.snap(v));
       }
       const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)),
-        p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0];
-      this.send(p, { t: 's', ts, p: list, c, me });
+        p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0, p.stars || 0];
+      this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), me });
     }
   }
 
@@ -919,13 +961,19 @@ class Room {
     // настоящие игроки видят друг друга на карте всегда
     const h = [];
     for (const p of this.players.values()) if (!p.isBot && p.alive) h.push([p.id, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
-    const json = JSON.stringify({ t: 'mm', l, h });
+    // полиция с мигалками и скорая - на радаре у всех
+    const pc = [], am = [];
+    for (const v of this.vehicles.list.values()) {
+      if (v.dead || !v.siren || v.state !== 'npc') continue;
+      (v.kind === 'police' ? pc : am).push([Math.round(v.x), Math.round(v.y)]);
+    }
+    const json = JSON.stringify({ t: 'mm', l, h, pc, am });
     for (const p of this.players.values()) if (!p.isBot) this.send(p, json);
   }
 
   sendScoreboard() {
     this.sbDirty = false;
-    const json = JSON.stringify({ t: 'sb', l: [...this.players.values()].map(p => [p.id, p.kills, p.deaths]) });
+    const json = JSON.stringify({ t: 'sb', l: [...this.players.values()].map(p => [p.id, p.kills, p.deaths, p.civKills || 0, p.copKills || 0]) });
     for (const p of this.players.values()) if (!p.isBot) this.send(p, json);
   }
 }

@@ -80,7 +80,8 @@ console.log(`180 с игры за ${ms.toFixed(0)} мс (${(ms / T).toFixed(3)} 
 console.log(`машин на парковках ${parked0}, с водителями ${TRAFFIC_TARGET}; средний пробег машины с водителем ${avgTravel.toFixed(0)} м;` +
   ` вне дороги ${(100 * offRoad / Math.max(1, trafficSamples)).toFixed(2)}%; машин в стене ${overlapsHard}`);
 console.log(JSON.stringify(stats));
-const trafficEnd = [...room.vehicles.list.values()].filter(v => v.state === 'traffic').length;
+// машины с водителями: по полосам (traffic) и те, где водитель-житель уезжает или мстит (npc)
+const trafficEnd = [...room.vehicles.list.values()].filter(v => v.state === 'traffic' || v.state === 'npc').length;
 console.log(`машин с водителями в конце: ${trafficEnd} из ${TRAFFIC_TARGET}`);
 assert.ok(trafficEnd >= TRAFFIC_TARGET - 3, 'машины с водителями появляются снова');
 assert.ok(snaps.length > 2500, 'снимки идут 15 раз в секунду');

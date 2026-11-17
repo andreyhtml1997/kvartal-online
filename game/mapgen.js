@@ -341,17 +341,24 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     }
   }
 
-  for (const [bx, bw] of ax.blocks) {
-    for (const [by, bh] of ay.blocks) {
+  // кварталы: в каждом городе есть хотя бы один парк (вокруг него бегают футболисты)
+  const cityBlocks = [];
+  const parkWalk = new Uint8Array(N);   // тротуар вокруг парка: без деревьев и бочек - беговая дорожка
+  const forcedPark = ri(0, ax.blocks.length * ay.blocks.length - 1);
+  ax.blocks.forEach(([bx, bw], i) => {
+    ay.blocks.forEach(([by, bh], j) => {
       fillG(bx, by, bw, bh, G.WALK); // тротуар 2 клетки по краю квартала
       const ix = bx + 2, iy = by + 2, iw = bw - 4, ih = bh - 4;
       const r = rng();
-      if (r < 0.52) blockBuildings(ix, iy, iw, ih);
-      else if (r < 0.68) blockPark(ix, iy, iw, ih);
-      else if (r < 0.84) blockParking(ix, iy, iw, ih);
+      const kind = cityBlocks.length === forcedPark ? 'park' : r < 0.52 ? 'buildings' : r < 0.68 ? 'park' : r < 0.84 ? 'parking' : 'yard';
+      if (kind === 'buildings') blockBuildings(ix, iy, iw, ih);
+      else if (kind === 'park') blockPark(ix, iy, iw, ih);
+      else if (kind === 'parking') blockParking(ix, iy, iw, ih);
       else blockYard(ix, iy, iw, ih);
-    }
-  }
+      if (kind === 'park') for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) parkWalk[I(x, y)] = 1;
+      cityBlocks.push({ x: bx, y: by, w: bw, h: bh, i, j, kind });
+    });
+  });
 
   // ---------- улицы: дороги свободны для машин с водителями; деревья и бочки на тротуарах ----------
   // углы у перекрёстков не загромождаем: там поворачивают машины с водителями
@@ -364,7 +371,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   };
   for (let y = 1; y < H - 1; y++) {
     for (let x = 1; x < W - 1; x++) {
-      if (ground[I(x, y)] !== G.WALK || !free(x, y) || nearCross(x, y, 3)) continue;
+      if (ground[I(x, y)] !== G.WALK || !free(x, y) || nearCross(x, y, 3) || parkWalk[I(x, y)]) continue;
       const r = rng();
       if (r < 0.018 && !near(x, y, 3, B.TREE)) block[I(x, y)] = B.TREE;
       else if (r < 0.024 && !near(x, y, 2, B.BARREL)) block[I(x, y)] = B.BARREL;
@@ -431,7 +438,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
 
   return {
     seed, w: W, h: H, ground, block, hp, dmg: new Uint8Array(N), owner, keep,
-    buildings, carSpawns, crates, roads: { x: ax.roads, y: ay.roads }, reach,
+    buildings, carSpawns, crates, roads: { x: ax.roads, y: ay.roads }, reach, blocks: cityBlocks,
     spawnTiles: Int32Array.from(spawnTiles), pickupTiles: Int32Array.from(pickupTiles)
   };
 }

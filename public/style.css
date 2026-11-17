@@ -131,6 +131,13 @@ input[type="text"] {
   background: rgba(0, 0, 0, 0.6); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation;
 }
 .gear[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
+/* звёзды розыска под полосками здоровья */
+.stars { display: flex; justify-content: flex-end; gap: 2px; padding: 1px 4px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line);
+  font: 700 calc(16px * var(--hud))/1 var(--font-head); }
+.stars i { font-style: normal; color: rgba(255, 255, 255, 0.22); }
+.stars i.on { color: #ffd23f; text-shadow: 0 0 6px rgba(255, 210, 63, 0.8); }
+.stars.flash i.on { animation: starflash 0.5s steps(2) 6; }
+@keyframes starflash { 50% { color: #4da3ff; text-shadow: 0 0 8px #4da3ff; } }
 /* под шестерёнкой: голосовой чат и микрофон */
 .hud-btns { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 #btnVoice.on { background: #1e8e4e; border-color: #5fe39a; }

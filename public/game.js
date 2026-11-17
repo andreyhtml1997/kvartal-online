@@ -44,7 +44,7 @@
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
-    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0
+    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0
   };
 
   function makePlayer(id) {
@@ -52,14 +52,17 @@
       rx: 0, ry: 0, ra: 0, seen: 0, punch: 0, hidden: true, walk: 0, lx: null, ly: null, mvx: 0, mvy: 0, stepAcc: 0 };
   }
   function upsertPlayer(info) {
-    const [id, name, color, bot, kills, deaths] = info;
+    const [id, name, color, bot, kills, deaths, civ, cops] = info;
     let p = S.players.get(id);
     const isNew = !p;
     if (!p) { p = makePlayer(id); S.players.set(id, p); }
-    p.name = name; p.color = color; p.bot = !!bot; p.kills = kills; p.deaths = deaths;
+    p.name = name; p.color = color; p.bot = !!bot; p.kills = kills; p.deaths = deaths; p.civ = civ || 0; p.cops = cops || 0;
     return isNew;
   }
-  const nameOf = id => (S.players.get(id) || {}).name || '???';
+  // жители (стрелок с отрицательным номером: -100 - вид)
+  const NPC_NAMES = ['Прохожий', 'Полиция', 'Врач', 'Футболист', 'Тренер'];
+  const NPC_KILL = ['Вас убил прохожий', 'Вас убила полиция', 'Вас убил врач', 'Вас убил футболист', 'Вас убил тренер'];
+  const nameOf = id => (id <= -100 ? NPC_NAMES[-100 - id] || 'Житель' : (S.players.get(id) || {}).name || '???');
 
   // ======================================================================
   // Холст
@@ -283,6 +286,7 @@
       pain(x, y) { sample(pick(PAIN), { x, y, gain: 0.7 }); },
       deathAt(x, y) { sample(pick(DEATH), { x, y, gain: 0.8 }); },
       tires() { sample('tires', { gain: 0.4 }); },
+      siren1() { if (!sample('siren', { gain: 0.45, rate: 1 })) { tone({ freq: 700, dur: 0.35, gain: 0.12, type: 'square', slide: 1100 }); } },
       death() { if (sample(pick(DEATH), { gain: 0.9 })) return; tone({ freq: 300, dur: 0.6, gain: 0.22, type: 'sawtooth', slide: 60 }); },
       metal(x, y) { if (sample('metal', { x, y, gain: 0.35 })) return; burst({ dur: 0.06, freq: 3000, q: 5, gain: 0.18, x, y }); },
       // шаги: звук зависит от того, по чему идём
@@ -837,7 +841,7 @@
   }
 
   // Машина: a - курс (0 - на восток). Модель рисуется носом вверх, поэтому поворот a + 90°.
-  function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine) {
+  function drawVehicle(x, y, a, colorIdx, st, fl, speed, mine, kind, now) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(a + Math.PI / 2);
@@ -869,12 +873,71 @@
       ctx.beginPath(); ctx.arc(-0.64, 2.05, 0.35, 0, Math.PI * 2); ctx.arc(0.64, 2.05, 0.35, 0, Math.PI * 2); ctx.fill();
     }
     if (st >= 2) { ctx.strokeStyle = 'rgba(20,10,5,0.7)'; ctx.lineWidth = 0.06; ctx.beginPath(); ctx.moveTo(-0.5, -1.5); ctx.lineTo(0.1, -1); ctx.lineTo(0.4, -1.6); ctx.stroke(); }
+    if (kind) drawLivery(kind, fl, now || performance.now());
     ctx.restore();
     const hx = x + Math.cos(a) * 1.4, hy = y + Math.sin(a) * 1.4;
     if (fl & 2) {
       if (Math.random() < 0.7) spawn('fire', hx + (Math.random() - 0.5) * 1.2, hy + (Math.random() - 0.5) * 1.2, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 0.8, 0.45, 0.42);
       if (Math.random() < 0.3) spawn('smoke', hx, hy, 1, '#333', 0.8, 1.8, 0.4);
     } else if (st >= 2 && Math.random() < (st === 3 ? 0.25 : 0.08)) spawn('smoke', hx, hy, 1, st === 3 ? '#3a3a3a' : '#666', 0.6, 1.6, 0.3);
+  }
+
+  // Полиция: чёрно-белая, мигалка красно-синяя; скорая: белая с красной полосой и крестом. Мигают, когда едут на вызов.
+  function drawLivery(kind, fl, now) {
+    const on = fl & 16, ph = Math.floor(now / 160) % 2;
+    if (kind === 1) {
+      ctx.fillStyle = '#f4f4f4'; ctx.fillRect(-0.95, -0.55, 1.9, 1.1);
+      ctx.fillStyle = '#16181d'; roundRect(ctx, -0.95, -2.0, 1.9, 1.05, 0.45); ctx.fill(); roundRect(ctx, -0.95, 1.05, 1.9, 0.95, 0.45); ctx.fill();
+      ctx.fillStyle = on ? (ph ? '#ff2a2a' : '#3a2020') : '#5a2020'; ctx.fillRect(-0.62, -0.2, 0.6, 0.32);
+      ctx.fillStyle = on ? (ph ? '#20263a' : '#2a6bff') : '#20305a'; ctx.fillRect(0.02, -0.2, 0.6, 0.32);
+    } else if (kind === 2) {
+      ctx.fillStyle = '#f7f7f7'; roundRect(ctx, -0.95, -2.0, 1.9, 4.0, 0.45); ctx.fill();
+      ctx.fillStyle = '#e53935'; ctx.fillRect(-0.95, 0.35, 1.9, 0.28);
+      ctx.fillRect(-0.1, -0.35, 0.2, 0.6); ctx.fillRect(-0.3, -0.15, 0.6, 0.2);
+      ctx.fillStyle = on ? (ph ? '#ff2a2a' : '#2a6bff') : '#7a7a7a'; ctx.fillRect(-0.55, -1.05, 1.1, 0.22);
+      ctx.fillStyle = '#1b2631'; roundRect(ctx, -0.76, -1.6, 1.52, 0.42, 0.12); ctx.fill();
+    }
+    if (on) {
+      // свет мигалки на асфальте
+      const g = ctx.createRadialGradient(0, -0.1, 0, 0, -0.1, 3.2);
+      g.addColorStop(0, ph ? 'rgba(255,40,40,0.28)' : 'rgba(50,110,255,0.28)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -0.1, 3.2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Житель: прохожий, полицейский (тёмно-синяя форма и фуражка), врач (белый с красным крестом), футболист, тренер
+  const PED_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#d35400', '#16a085', '#7f8c8d', '#f39c12', '#2c3e50', '#e84393', '#6c5ce7', '#00b894'];
+  const KIT_COLORS = ['#e74c3c', '#3498db', '#f1c40f', '#2ecc71'];
+  function pedColor(n) { return n.kind === 1 ? '#1f3a93' : n.kind === 2 ? '#f2f2f2' : n.kind === 3 ? KIT_COLORS[n.look % 4] : n.kind === 4 ? '#2d3436' : PED_COLORS[n.look % PED_COLORS.length]; }
+  function drawPed(n, now) {
+    const col = pedColor(n);
+    if (!(n.fl & 1)) {
+      // лежит
+      ctx.save();
+      ctx.translate(n.rx, n.ry); ctx.scale(1.2, 1.2); ctx.rotate(n.ra + Math.PI / 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0.06, 0.08, 0.3, 0.62, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3a4256'; ctx.fillRect(-0.18, 0.15, 0.13, 0.5); ctx.fillRect(0.05, 0.15, 0.13, 0.5);
+      ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, -0.05, 0.24, 0.36, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#d9a77c'; ctx.beginPath(); ctx.arc(-0.34, -0.2, 0.09, 0, Math.PI * 2); ctx.arc(0.34, -0.25, 0.09, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2b1d14'; ctx.beginPath(); ctx.arc(0, -0.52, 0.17, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const moving = Math.hypot(n.mvx, n.mvy) > 0.6;
+    if (n.fl & 8) {
+      // врач на коленях лечит: зелёные крестики над телом
+      if (Math.random() < 0.08) spawn('spark', n.rx + Math.cos(n.ra) * 0.7, n.ry + Math.sin(n.ra) * 0.7, 1, '#7dff9a', 0.8, 0.6, 0.06, -Math.PI / 2, 0.6);
+    }
+    drawPlayer(n.rx, n.ry, n.ra, col, n.w || 0, n.fl & 4, 0, false, n.walk, Math.atan2(n.mvy, n.mvx), moving);
+    ctx.save();
+    ctx.translate(n.rx, n.ry); ctx.scale(1.2, 1.2); ctx.rotate(n.ra);
+    if (n.kind === 1) { ctx.fillStyle = '#0d1b4f'; ctx.beginPath(); ctx.arc(0.02, 0, 0.21, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffd23f'; ctx.fillRect(0.12, -0.04, 0.07, 0.08); }
+    else if (n.kind === 2) { ctx.fillStyle = '#e53935'; ctx.fillRect(-0.2, -0.05, 0.16, 0.1); ctx.fillRect(-0.17, -0.12, 0.1, 0.24); }
+    else if (n.kind === 3) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(-0.16, -0.36, 0.06, 0.72); }
+    ctx.restore();
+    // нападает - красное кольцо, горит - огонь
+    if (n.fl & 16) { ctx.strokeStyle = 'rgba(255,50,50,0.75)'; ctx.lineWidth = 0.06; ctx.beginPath(); ctx.arc(n.rx, n.ry, 0.7, 0, Math.PI * 2); ctx.stroke(); }
+    if (n.fl & 32) burnFx(n.rx, n.ry);
   }
 
   function myBuilding() {
@@ -950,7 +1013,7 @@
   // Вещь на земле: заметно светится, от неё расходятся круги
   function drawPickup(pk, t) {
     const bob = Math.sin(t * 3 + pk.id) * 0.06;
-    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : pk.kind === PK.SHROOM ? '255,90,200' : '110,180,255';
+    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : pk.kind === PK.SHROOM ? '255,90,200' : pk.kind === PK.STAR ? '90,170,255' : '110,180,255';
     ctx.save();
     ctx.translate(pk.x, pk.y);
     if (pk.kind !== PK.AMMO) {
@@ -983,6 +1046,8 @@
       ctx.fillStyle = '#e53935'; ctx.fillRect(-0.07, -0.19, 0.14, 0.38); ctx.fillRect(-0.19, -0.07, 0.38, 0.14);
     } else if (pk.kind === PK.SHROOM) {
       drawShroomIcon(ctx, 0, 0.02, 0.3);
+    } else if (pk.kind === PK.STAR) {
+      drawStarIcon(ctx, 0, 0, 0.36, t);
     } else {
       ctx.fillStyle = '#2f5d8a'; roundRect(ctx, -0.26, -0.3, 0.52, 0.6, 0.1); ctx.fill();
       ctx.fillStyle = '#1d3d5c'; ctx.fillRect(-0.06, -0.3, 0.12, 0.6);
@@ -1404,6 +1469,13 @@
       if (d > range || d < 0.3) continue;
       out.push({ ang: Math.atan2(dy, dx), d, p });
     }
+    // мирных автоприцел не выбирает - только полицию и тех, кто напал
+    for (const n of S.peds.values()) {
+      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
+      const dx = n.rx - S.me.x, dy = n.ry - S.me.y, d = Math.hypot(dx, dy);
+      if (d > range || d < 0.3) continue;
+      out.push({ ang: Math.atan2(dy, dx), d, p: n });
+    }
     return out;
   }
   // ближайший видимый противник (когда палец на стике почти не отведён)
@@ -1423,6 +1495,11 @@
       if (p.id === S.myId || !(p.flags & 1) || p.hidden || (p.flags & 8)) continue;
       const d = Math.hypot(p.rx - tx, p.ry - ty);
       if (d < bd) { bd = d; best = { x: p.rx, y: p.ry }; }
+    }
+    for (const n of S.peds.values()) {
+      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
+      const d = Math.hypot(n.rx - tx, n.ry - ty);
+      if (d < bd) { bd = d; best = { x: n.rx, y: n.ry }; }
     }
     return best;
   }
@@ -1513,7 +1590,8 @@
     updateHud(true);
   }
   function cycleWeapon(dir) {
-    const owned = [0, 1, 2, 3, 4, 5].filter(i => i === W.FISTS || S.me.ammo[i] > 0);
+    // по кругу по всему оружию, что есть (вместе с огнемётом и пилой)
+    const owned = WEAPONS.map(w => w.id).filter(i => i === W.FISTS || S.me.ammo[i] > 0);
     const idx = owned.indexOf(S.me.cur);
     selectWeapon(owned[(idx + dir + owned.length) % owned.length]);
   }
@@ -1603,10 +1681,10 @@
       case 's': onSnapshot(m); break;
       case 'e': onEvents(m); break;
       case 'sb':
-        for (const [id, k, d] of m.l) { const p = S.players.get(id); if (p) { p.kills = k; p.deaths = d; } }
+        for (const [id, k, d, civ, cops] of m.l) { const p = S.players.get(id); if (p) { p.kills = k; p.deaths = d; p.civ = civ || 0; p.cops = cops || 0; } }
         if (!$('board').hidden) renderBoard();
         break;
-      case 'mm': S.pings = m.l; S.humans = m.h || []; break;
+      case 'mm': S.pings = m.l; S.humans = m.h || []; S.police = m.pc || []; S.ambs = m.am || []; break;
     }
   }
 
@@ -1628,6 +1706,7 @@
     S.bullets.clear(); S.vehicles.clear(); S.rammed.clear();
     S.particles.length = 0; S.effects.length = 0; S.decals.length = 0; S.hitMarks.length = 0; S.npcs.length = 0; S.blasts.length = 0; S.pings = [];
     S.tileFires.clear();
+    S.peds.clear(); S.police = []; S.ambs = []; S.stars = 0; syncStars(false);
     endTrip();
     resetMe();
     S.clockOff = null;
@@ -1681,10 +1760,10 @@
       if (p.snaps.length > 12) p.snaps.shift();
     }
     if (m.c) {
-      for (const [id, x, y, a, v, st, color, fl, driver, hp] of m.c) {
+      for (const [id, x, y, a, v, st, color, fl, driver, hp, kind] of m.c) {
         let c = S.vehicles.get(id);
         if (!c) { c = { id, snaps: [], rx: x, ry: y, ra: a }; S.vehicles.set(id, c); }
-        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now;
+        c.v = v; c.st = st; c.color = color; c.fl = fl; c.driver = driver; c.hp = hp; c.seen = now; c.kind = kind || 0;
         const last = c.snaps[c.snaps.length - 1];
         if (last && Math.hypot(last[1] - x, last[2] - y) > 12) c.snaps.length = 0;
         else if (last && m.ts > last[0]) {
@@ -1696,7 +1775,22 @@
         if (c.snaps.length > 12) c.snaps.shift();
       }
     }
-    const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh] = m.me;
+    // жители: [номер, x, y, угол, флаги, оружие, вид, внешность]
+    if (m.n) for (const [id, x, y, a, fl, w, kind, look] of m.n) {
+      let n = S.peds.get(id);
+      if (!n) { n = { id, snaps: [], rx: x, ry: y, ra: a, walk: 0, lx: null, ly: null, mvx: 0, mvy: 0 }; S.peds.set(id, n); }
+      n.fl = fl; n.w = w; n.kind = kind; n.look = look; n.seen = now;
+      const last = n.snaps[n.snaps.length - 1];
+      if (last && Math.hypot(last[1] - x, last[2] - y) > 6) n.snaps.length = 0;
+      n.snaps.push([m.ts, x, y, a]);
+      if (n.snaps.length > 10) n.snaps.shift();
+    }
+    const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh, stars] = m.me;
+    if ((stars || 0) !== S.stars) {
+      if ((stars || 0) > S.stars) { toast(stars === 1 ? 'Вас разыскивает полиция!' : `Розыск: ${'★'.repeat(stars)}`, 2200); Sound.siren1(); }
+      S.stars = stars || 0;
+      syncStars(true);
+    }
     S.me.hp = hp; S.me.ar = ar; S.me.ammo = ammo; S.me.respawnIn = respawnIn;
     if (performance.now() - S.me.switchAt > 500) S.me.cur = cur;
     if (Math.abs(S.me.stamina - stamina) > 12) S.me.stamina = stamina;
@@ -1794,6 +1888,7 @@
     if (m.pu) for (const [pid, kind, w] of m.pu) {
       if (pid !== S.myId) continue;
       if (kind === PK.SHROOM) { Sound.gulp(); startTrip(); continue; }
+      if (kind === PK.STAR) { Sound.pickup(); toast('Минус одна звезда розыска', 2000); continue; }
       Sound.pickup();
       toast(kind === PK.WEAPON ? `Подобрано: ${WEAPONS[w].name}` : kind === PK.AMMO ? `Патроны: ${WEAPONS[w].name}` : kind === PK.HEALTH ? 'Аптечка' : 'Бронежилет');
     }
@@ -1821,6 +1916,12 @@
     if (m.tf) for (const k of m.tf) S.tileFires.set(k, now + 9000);
     if (m.tfx) for (const k of m.tfx) S.tileFires.delete(k);
     if (m.fl) for (const [x, y, a] of m.fl) S.npcs.push({ x, y, a, t0: now, walk: 0, color: ['#8e44ad', '#16a085', '#d35400', '#7f8c8d'][Math.floor(Math.random() * 4)] });
+    if (m.nh) for (const [x, y] of m.nh) {
+      spawn('blood', x, y, 4, '#9b0f0f', 2.5, 0.4, 0.1);
+      if (now - S.pedPainAt > 150) { S.pedPainAt = now; Sound.pain(x, y); }
+    }
+    if (m.nk) for (const [, x, y] of m.nk) { spawn('blood', x, y, 10, '#9b0f0f', 3.5, 0.6, 0.12); addDecal('blood', x, y, 0.55); Sound.deathAt(x, y); }
+    if (m.rv) for (const [id] of m.rv) { const n = S.peds.get(id); if (n) { spawn('spark', n.rx, n.ry, 10, '#7dff9a', 3, 0.6, 0.06); spawn('flash', n.rx, n.ry, 2, '#b9ffc9', 1, 0.4, 0.4); } }
     if (m.vc) for (const [id, on] of m.vc) if (id !== S.myId) feed(`${nameOf(id)} ${on ? 'подключился к голосовому чату' : 'вышел из голосового чата'}`);
     if (m.bo) for (const [on, who] of m.bo) {
       S.botsOn = !!on;
@@ -1843,7 +1944,7 @@
     if (victim === S.myId) {
       S.me.alive = false;
       S.me.vehicle = 0; S.car = null;
-      $('deathBy').textContent = self ? (w === -2 ? 'Вас сбила машина' : 'Вы погибли') : `Вас убил ${nameOf(killer)}`;
+      $('deathBy').textContent = killer <= -100 ? NPC_KILL[-100 - killer] || 'Вы погибли' : self ? (w === -2 ? 'Вас сбила машина' : 'Вы погибли') : `Вас убил ${nameOf(killer)}`;
       $('deathScreen').hidden = false;
       Sound.death();
     } else {
@@ -1968,7 +2069,7 @@
   function renderBoard() {
     const rows = [...S.players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
     $('boardBody').innerHTML = rows.map(p =>
-      `<tr class="${p.id === S.myId ? 'me' : ''}"><td><span class="dot" style="background:${esc(p.color)}"></span>${esc(p.name)}</td><td>${p.kills}</td><td>${p.deaths}</td></tr>`).join('');
+      `<tr class="${p.id === S.myId ? 'me' : ''}"><td><span class="dot" style="background:${esc(p.color)}"></span>${esc(p.name)}</td><td>${p.kills}</td><td>${p.deaths}</td><td>${p.civ || 0}</td><td>${p.cops || 0}</td></tr>`).join('');
   }
   function showBoard(on) {
     if (!S.inGame) return;
@@ -1995,6 +2096,13 @@
   $('bigmap').addEventListener('click', () => showBig(false));
   mini.addEventListener('click', () => { Sound.init(); showBig(true); });
   mini.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showBig(true); } });
+  function syncStars(flash) {
+    const el = $('stars');
+    el.hidden = !S.stars;
+    el.querySelectorAll('i').forEach((s, i) => s.classList.toggle('on', i < S.stars));
+    el.setAttribute('aria-label', S.stars ? `Розыск: ${S.stars} из 5` : 'Розыск: нет');
+    if (flash) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  }
   function syncBotsBtn() {
     const b = $('btnBots');
     b.setAttribute('aria-pressed', S.botsOn ? 'true' : 'false');
@@ -2084,6 +2192,9 @@
     } else if (pk.kind === PK.SHROOM) {
       drawRings(g, x, y, s, '255,90,200', t, pk.id);
       drawShroomIcon(g, x, y + s * 0.1, s * 0.95);
+    } else if (pk.kind === PK.STAR) {
+      drawRings(g, x, y, s, '90,170,255', t, pk.id);
+      drawStarIcon(g, x, y, s * 1.1, t);
     } else {
       g.fillStyle = '#e0b030'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1;
       g.fillRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7); g.strokeRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7);
@@ -2143,12 +2254,41 @@
         g.save();
         g.translate(ex, ey);
         g.rotate(ang);
-        g.fillStyle = pk.kind === PK.WEAPON ? '#ffd23f' : pk.kind === PK.HEALTH ? '#ff5a5a' : pk.kind === PK.SHROOM ? '#ff5ac8' : '#6eb4ff';
+        g.fillStyle = pk.kind === PK.WEAPON ? '#ffd23f' : pk.kind === PK.HEALTH ? '#ff5a5a' : pk.kind === PK.SHROOM ? '#ff5ac8' : pk.kind === PK.STAR ? '#5aaaff' : '#6eb4ff';
         g.strokeStyle = 'rgba(0,0,0,0.7)';
         g.lineWidth = 1;
         g.beginPath(); g.moveTo(5 * u, 0); g.lineTo(-3 * u, 4 * u); g.lineTo(-3 * u, -4 * u); g.closePath(); g.fill(); g.stroke();
         g.restore();
       }
+    }
+    // полиция (мигает красным и синим, за краем радара - стрелка) и скорая
+    const blink = Math.floor(now / 200) % 2;
+    for (const [px, py] of S.police) {
+      const sx = toX(px), sy = toY(py);
+      if (sx >= 0 && sy >= 0 && sx <= size && sy <= size) {
+        g.fillStyle = blink ? '#ff3030' : '#3a7bff';
+        g.strokeStyle = '#fff'; g.lineWidth = Math.max(1, u * 0.8);
+        g.beginPath(); g.arc(sx, sy, 4 * u, 0, Math.PI * 2); g.fill(); g.stroke();
+      } else if (!full) {
+        const ang = Math.atan2(py - cy, px - cx), m = 9 * u;
+        const ex = clamp(size / 2 + Math.cos(ang) * size, m, size - m), ey = clamp(size / 2 + Math.sin(ang) * size, m, size - m);
+        g.save(); g.translate(ex, ey); g.rotate(ang);
+        g.fillStyle = blink ? '#ff3030' : '#3a7bff'; g.strokeStyle = '#fff'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(5 * u, 0); g.lineTo(-3 * u, 4 * u); g.lineTo(-3 * u, -4 * u); g.closePath(); g.fill(); g.stroke();
+        g.restore();
+      }
+    }
+    for (const [ax, ay] of S.ambs) {
+      const sx = toX(ax), sy = toY(ay);
+      if (sx < 0 || sy < 0 || sx > size || sy > size) continue;
+      g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1;
+      g.fillRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u); g.strokeRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u);
+      g.fillStyle = '#e53935'; g.fillRect(sx - 1 * u, sy - 3 * u, 2 * u, 6 * u); g.fillRect(sx - 3 * u, sy - 1 * u, 6 * u, 2 * u);
+    }
+    for (const n of S.peds.values()) {
+      if (!(n.fl & 1) || !(n.kind === 1 || (n.fl & 16))) continue;
+      g.fillStyle = n.kind === 1 ? '#3a7bff' : '#ff5050';
+      g.beginPath(); g.arc(toX(n.rx), toY(n.ry), 2.2 * u, 0, Math.PI * 2); g.fill();
     }
     // кто стреляет
     const pulse = 0.6 + 0.4 * Math.sin(now / 120);
@@ -2548,6 +2688,16 @@
       if (d < sd) { sd = d; sawNear = p; }
     }
     if (sawNear) want.push({ key: 'o', name: sawNear.saw > 0 ? 'saw_cut' : 'saw_idle', gain: sawNear.saw > 0 ? 0.5 : 0.18, x: sawNear.rx, y: sawNear.ry });
+    // сирены: ближайшая полиция и ближайшая скорая, которые едут с мигалками
+    let pol = null, amb = null, pd = 45, ad = 45;
+    for (const v of S.vehicles.values()) {
+      if (!(v.fl & 16) || !v.kind) continue;
+      const d = Math.hypot(v.rx - S.me.x, v.ry - S.me.y);
+      if (v.kind === 1 && d < pd) { pd = d; pol = v; }
+      if (v.kind === 2 && d < ad) { ad = d; amb = v; }
+    }
+    if (pol) want.push({ key: 'pol', name: 'siren', gain: 0.45, x: pol.rx, y: pol.ry });
+    if (amb) want.push({ key: 'amb', name: 'ambulance', gain: 0.4, x: amb.rx, y: amb.ry });
     Sound.loops(want);
   }
 
@@ -2633,7 +2783,7 @@
       if (!inView(v.rx - 3, v.ry - 3, 6, 6)) continue;
       const speed = id === S.me.vehicle && S.car ? S.car.v : v.v;
       const fl = id === S.me.vehicle && S.car ? (v.fl & ~1) | (S.car.thr < 0 && S.car.v > 0.5 ? 1 : 0) : v.fl;
-      drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle);
+      drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle, v.kind, now);
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
         if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - 2.4, hp: 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
@@ -2672,6 +2822,18 @@
       if (p.flags & 32) burnFx(p.rx, p.ry);
       if (p.flags & 64) tripHalo(p.rx, p.ry, now);
       tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false, talk: !!(p.flags & 128) });
+    }
+    for (const [id, n] of S.peds) {
+      if (Date.now() - n.seen > 1000) { S.peds.delete(id); continue; }
+      if (!interpolate(n, rt)) continue;
+      if (n.lx !== null && n.fl & 1) {
+        const dx = n.rx - n.lx, dy = n.ry - n.ly;
+        n.mvx = n.mvx * 0.7 + (dt > 0 ? dx / dt : 0) * 0.3;
+        n.mvy = n.mvy * 0.7 + (dt > 0 ? dy / dt : 0) * 0.3;
+        n.walk += Math.hypot(dx, dy) * 4.8;
+      }
+      n.lx = n.rx; n.ly = n.ry;
+      if (inView(n.rx - 1, n.ry - 1, 2, 2)) drawPed(n, now);
     }
     for (const n of S.npcs) {
       const age = (now - n.t0) / 1000;
@@ -2799,6 +2961,19 @@
     ctx.beginPath(); ctx.arc(x, y, 0.85 + 0.08 * Math.sin(now / 150), 0, Math.PI * 2); ctx.stroke();
   }
 
+  // звезда погашения розыска: синяя звезда в белой обводке
+  function drawStarIcon(g, x, y, s, t) {
+    g.save();
+    g.translate(x, y);
+    g.rotate(Math.sin(t * 2) * 0.15);
+    g.beginPath();
+    for (let i = 0; i < 10; i++) { const r = i % 2 ? s * 0.45 : s, a = -Math.PI / 2 + i * Math.PI / 5; g.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+    g.closePath();
+    g.fillStyle = '#2f7bff'; g.fill();
+    g.lineWidth = Math.max(0.04, s * 0.14); g.strokeStyle = '#ffffff'; g.stroke();
+    g.restore();
+  }
+
   function drawShroomIcon(g, x, y, s) {
     g.fillStyle = '#efe4c8';
     roundRect(g, x - s * 0.3, y - s * 0.1, s * 0.6, s, s * 0.2); g.fill();
@@ -2815,7 +2990,7 @@
     const now = performance.now();
     S.trip = { t0: S.trip ? S.trip.t0 : now, until: now + KV.TRIP * 1000 };
     Sound.tripMusic(KV.TRIP);
-    toast('Грибочек! Мир поплыл...', 2500);
+    toast('Грибочек! +50 здоровья, мир поплыл...', 2500);
   }
   function endTrip() {
     if (!S.trip) return;

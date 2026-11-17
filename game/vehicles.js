@@ -107,7 +107,8 @@ class Vehicles {
 
   spawnTraffic(initial) {
     const room = this.room;
-    if (this.list.size >= this.maxVehicles) return null;
+    // брошенные машины, полиция и скорые не должны вытеснять поток - запас сверх лимита
+    if (this.list.size >= this.maxVehicles + 8) return null;
     for (let tries = 0; tries < (initial ? 150 : 40); tries++) {
       const d = Math.floor(Math.random() * 4);
       const i = Math.floor(Math.random() * this.vr.length), j = Math.floor(Math.random() * this.hr.length);
@@ -182,6 +183,7 @@ class Vehicles {
       person = true;
       break;
     }
+    if (!person && room.npcs.personAhead(v, c, s)) person = true; // прохожий переходит дорогу
     if (person) {
       v.seenT += dt;
       if (v.seenT > 0.35) {
@@ -276,8 +278,11 @@ class Vehicles {
     const rel = (avx - bvx) * nx + (avy - bvy) * ny;
     const impact = Math.max(0, -rel);
     // сильный удар - водитель-NPC выскакивает, дальше машина толкается как любая другая
-    if (impact >= KNOCK) { if (a.state === 'traffic') this.npcFlee(a); if (b.state === 'traffic') this.npcFlee(b); }
-    const dyn = v => v.state === 'parked' || v.state === 'bot';
+    if (impact >= KNOCK) {
+      if (a.state === 'traffic') this.npcFlee(a, b.state === 'human' ? b.driver : 0, 'ram');
+      if (b.state === 'traffic') this.npcFlee(b, a.state === 'human' ? a.driver : 0, 'ram');
+    }
+    const dyn = v => v.state === 'parked' || v.state === 'bot' || v.state === 'npc';
     const aMov = dyn(a), bMov = dyn(b);
     if (aMov || bMov) {
       const ax0 = a.x, ay0 = a.y, bx0 = b.x, by0 = b.y;
@@ -318,6 +323,10 @@ class Vehicles {
   damage(v, amount, attackerId) {
     if (v.dead || !(amount > 0)) return;
     if (attackerId) v.lastAttacker = attackerId;
+    // по машинам стрелять нельзя: звёзды розыска (кроме машин игроков и ботов - это перестрелка)
+    const att = attackerId > 0 ? this.room.players.get(attackerId) : null;
+    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') this.room.npcs.crime(att, v.kind === 'police' ? 8 : 3, 'v' + v.id);
+    if (v.state === 'traffic' && attackerId > 0) this.npcFlee(v, attackerId, 'shot');
     // горящую машину пули добивают: каждое попадание приближает взрыв
     if (v.burn > 0) { v.burn = Math.max(0.05, v.burn - amount / 40); return; }
     v.hp -= amount;
@@ -330,7 +339,11 @@ class Vehicles {
     if (attackerId) v.lastAttacker = attackerId;
     v.hp = 0;
     v.burn = CAR.FIRE;
-    if (v.state === 'traffic') this.npcFlee(v);
+    if (v.state === 'traffic') this.npcFlee(v, attackerId, 'fire');
+    else if (v.state === 'npc' && v.crew && v.crew.length) {
+      // горит - все выскакивают и бегут
+      for (const id of [...v.crew]) { const n = this.room.npcs.list.get(id); if (n) { this.room.npcs.exitCar(v, n); this.room.npcs.flee(n, v.x, v.y, 7); } }
+    }
     this.room.ev.vf.push(v.id);
   }
 
@@ -349,20 +362,14 @@ class Vehicles {
       if (d) this.room.send(d, { t: 'vk', x: r2(jx), y: r2(jy), w: r2(spin) });
       return;
     }
-    if (v.state === 'traffic') { if (s < 2) return; this.npcFlee(v); }
+    if (v.state === 'traffic') { if (s < 2) return; this.npcFlee(v, 0, 'blast'); }
     KV.applyImpulse(v, jx, jy, cp[0], cp[1]);
   }
 
-  // Водитель-NPC выскакивает и убегает (рисует браузер)
-  npcFlee(v) {
-    this.releaseAll(v);
-    const c = Math.cos(v.a), s = Math.sin(v.a);
-    const x = v.x + s * (CAR.HW + 0.5), y = v.y - c * (CAR.HW + 0.5);
-    this.room.ev.fl.push([r2(x), r2(y), r3(Math.atan2(-c, s) + (Math.random() - 0.5) * 0.8)]);
-    v.state = 'parked';
-    v.ai = null;
-    v.brake = false;
-    KV.resolveCar(this.map, v); // машина без водителя не должна стоять в препятствии
+  // Водитель-NPC отвечает на нападение (уезжает, выскакивает, давит, стреляет) - см. npcs.driverReact
+  npcFlee(v, attackerId, cause) {
+    this.room.npcs.driverReact(v, attackerId || 0, cause || 'fire');
+    KV.resolveCar(this.map, v); // машина не должна стоять в препятствии
   }
 
   explodeVehicle(v) {
@@ -373,6 +380,9 @@ class Vehicles {
       this.exit(d, true);
       room.damage(d, 250, v.lastAttacker, -1, d.x, d.y);
     }
+    room.npcs.carExploded(v);
+    const att = v.lastAttacker > 0 ? room.players.get(v.lastAttacker) : null;
+    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') room.npcs.crime(att, 15);
     this.remove(v);
     room.ev.vx.push(v.id);
     room.explode(v.x, v.y, CAR_BLAST, v.lastAttacker, -1);
@@ -393,7 +403,8 @@ class Vehicles {
       if (Math.abs(p.x - v.x) > 3.2 || Math.abs(p.y - v.y) > 3.2) continue;
       const out = KV.pushOutOBB(p.x, p.y, KV.PLAYER_R + 0.08, v.x, v.y, v.a, CAR.HL, CAR.HW);
       if (!out) continue;
-      if (speed > 1.2) {
+      // машина без водителя (катится сама) калечит только на заметной скорости
+      if (speed > (v.state === 'parked' ? 3 : 1.2)) {
         if (room.time - (v.hitCd.get(p.id) || -10) < 0.6) continue;
         v.hitCd.set(p.id, room.time);
         // машина есть машина: бьёт сильно уже на малой скорости, бронежилет почти не спасает
@@ -407,7 +418,7 @@ class Vehicles {
         const imp = 3 + speed * 0.7;
         room.ev.ck.push([v.id, p.id, r2(p.x), r2(p.y)]);
         if (p.isBot) {
-          const q = KV.moveCircle(this.map, out[0], out[1], kx * imp * 0.25, ky * imp * 0.25, KV.PLAYER_R);
+          const q = KV.pushOutSafe(this.map, p.x, p.y, out, kx * imp * 0.25, ky * imp * 0.25, KV.PLAYER_R);
           p.x = q[0]; p.y = q[1];
         } else {
           p.budget += imp * 0.6 + 2;
@@ -415,13 +426,21 @@ class Vehicles {
         }
         // брошенная на ходу машина засчитывает сбитого тому, кто из неё выпрыгнул
         const credit = v.driver || (room.time - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
-        room.damage(p, dmg, credit, -2, p.x, p.y, 0.2);
+        room.damage(p, dmg, credit || this.npcCredit(v), -2, p.x, p.y, 0.2);
         if (v.state !== 'human') v.v *= 0.8;
       } else if (p.isBot) {
-        const q = KV.collideCircle(this.map, out[0], out[1], KV.PLAYER_R);
+        const q = KV.pushOutSafe(this.map, p.x, p.y, out, 0, 0, KV.PLAYER_R);
         p.x = q[0]; p.y = q[1];
       }
     }
+    room.npcs.carHits(v, speed, vx, vy);
+  }
+
+  // кто за рулём машины NPC (для ленты «кто кого сбил»)
+  npcCredit(v) {
+    if (v.state !== 'npc' || !v.crew || !v.crew.length) return 0;
+    const n = this.room.npcs.list.get(v.crew[0]);
+    return n ? -100 - n.kind : 0;
   }
 
   // ---------- посадка и выход ----------
@@ -444,9 +463,11 @@ class Vehicles {
       const b = room.players.get(v.driver);
       if (b && b.vehicle === v.id) this.exit(b, true);
     }
-    if (v.state === 'traffic') this.npcFlee(v);
+    if (v.state === 'traffic') this.npcFlee(v, p.id, 'steal');
+    if (v.state === 'npc') this.room.npcs.ejectCrew(v, p.id); // полиция и вооружённые дают отпор угонщику
     this.releaseAll(v);
     v.state = p.isBot ? 'bot' : 'human';
+    v.role = null; v.siren = false;
     v.driver = p.id; v.lastDriver = p.id; v.ai = null; v.brake = false;
     v.tp++; v.budget = 0; v.lastMoveTime = room.time;
     p.vehicle = v.id; p.fire = false; p.fireLatch = false; p.sprint = false;
@@ -548,7 +569,7 @@ class Vehicles {
       if (jm > 25) { jx *= 25 / jm; jy *= 25 / jm; }
       if (o.state === 'traffic') {
         if (jm < 2.6) continue; // лёгкий толчок - NPC едет дальше
-        this.npcFlee(o);
+        this.npcFlee(o, p.id, 'ram');
       }
       KV.applyImpulse(o, jx, jy, cx, cy);
       const impact = jm / 0.65;
@@ -590,6 +611,10 @@ class Vehicles {
           const ctl = room.bots.driveControl(d, v, dt);
           if (d.vehicle === v.id) { this.physics(v, ctl[0], ctl[1], dt, d.id); d.x = v.x; d.y = v.y; }
         }
+      } else if (v.state === 'npc') {
+        // машиной рулит житель: беглец, обидчик, полиция, скорая
+        const ctl = room.npcs.pilot(v, dt);
+        if (v.state === 'npc') { this.physics(v, ctl[0], ctl[1], dt, 0); room.npcs.syncCrew(v); }
       } else if (v.state === 'parked') {
         const moving = Math.abs(v.v) > 0.02 || Math.abs(v.sx) > 0.02 || Math.abs(v.sy) > 0.02 || Math.abs(v.w) > 0.02;
         if (moving) this.physics(v, 0, 0, dt, 0);
@@ -610,12 +635,15 @@ class Vehicles {
     // стоят вдали от игроков, убираем - иначе они забивают дороги и лимит машин
     if (room.tickNo % 30 === 0) {
       for (const v of [...this.list.values()]) {
-        if (v.state === 'parked' && !v.spawn && (v.idleT || 0) > 45 && v.burn <= 0 && !this.seenByHumans(v.x, v.y, 30)) this.remove(v);
+        // у лимита машин эвакуатор приезжает быстрее
+        const wait = this.list.size > this.maxVehicles - 4 ? 15 : 45;
+        if (v.state === 'parked' && !v.spawn && (v.idleT || 0) > wait && v.burn <= 0 && !this.seenByHumans(v.x, v.y, 30)) this.remove(v);
       }
     }
     let traffic = 0;
     for (const v of this.list.values()) if (v.state === 'traffic') traffic++;
-    if (traffic < TRAFFIC_TARGET && room.time >= this.nextTrafficAt) this.nextTrafficAt = room.time + (this.spawnTraffic(false) ? 6 : 2);
+    // водители, напуганные стрельбой, бросают машины - поток пополняется быстро
+    if (traffic < TRAFFIC_TARGET && room.time >= this.nextTrafficAt) this.nextTrafficAt = room.time + (this.spawnTraffic(false) ? 2.5 : 1);
     if (this.respawnQueue.length && this.respawnQueue[0].at <= room.time) {
       const e = this.respawnQueue.shift();
       let free = this.list.size < this.maxVehicles;
@@ -629,8 +657,11 @@ class Vehicles {
 
   snap(v) {
     const st = v.hp > CAR.HP * 0.66 ? 0 : v.hp > CAR.HP * 0.4 ? 1 : v.hp > CAR.HP * 0.2 ? 2 : 3;
-    const fl = (v.brake ? 1 : 0) | (v.burn > 0 ? 2 : 0) | (v.state === 'traffic' ? 4 : 0) | (v.driver ? 8 : 0);
-    return [v.id, r2(v.x), r2(v.y), r3(v.a), Math.round(v.v * 10) / 10, st, v.color, fl, v.driver || 0, Math.ceil(v.hp)];
+    // 4 - рулит житель; 16 - мигалки и сирена; последний - вид: 0 обычная, 1 полиция, 2 скорая
+    const fl = (v.brake ? 1 : 0) | (v.burn > 0 ? 2 : 0) | (v.state === 'traffic' || v.state === 'npc' ? 4 : 0) | (v.driver ? 8 : 0) |
+      (v.siren && v.state === 'npc' ? 16 : 0);
+    return [v.id, r2(v.x), r2(v.y), r3(v.a), Math.round(v.v * 10) / 10, st, v.color, fl, v.driver || 0, Math.ceil(v.hp),
+      v.kind === 'police' ? 1 : v.kind === 'amb' ? 2 : 0];
   }
 }
 

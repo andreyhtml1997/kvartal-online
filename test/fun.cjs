@@ -25,6 +25,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(snd === 29, `загружено звуков из файлов: ${snd} из 29`);
     const players = await kv(() => window.__kv.S.players.size);
     check(players === 10, `в комнате 10 персонажей (${players})`);
+    // колёсико мыши листает всё оружие по кругу, включая огнемёт и пилу
+    await kv(() => window.__kv.send({ t: 'dbg', god: 1, give: 1 }));
+    await sleep(500);
+    await pc.mouse.move(900, 360);
+    const seenW = new Set();
+    for (let i = 0; i < 10; i++) { await pc.mouse.wheel(0, 120); await sleep(170); seenW.add(await kv(() => window.__kv.S.me.cur)); }
+    check(seenW.has(6) && seenW.has(7), `колёсико доходит до огнемёта и пилы (были: ${[...seenW].sort().join(',')})`);
     await kv(() => window.__kv.send({ t: 'dbg', god: 1, weapon: 6 }));
     await sleep(500);
     check(await kv(() => window.__kv.S.me.cur === 6), 'в руках огнемёт');
