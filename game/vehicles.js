@@ -18,6 +18,9 @@ const TRAFFIC_SPEED = 12;
 const KNOCK = 4;             // м/с: удар сильнее - водитель-NPC выскакивает, машину отбрасывает
 const CRASH_K = 15 / 21;     // машины стали быстрее (21 м/с вместо 15) - урон от аварий уменьшен, чтобы прочность осталась прежней
 const PARKED_RESPAWN = 60;    // с - через сколько на месте взорванной машины с парковки появится новая
+const JAM_PUSH = 4;           // с: столько машина с водителем стоит, упёршись в стоящую машину, потом толкает её сама
+const JAM_PUSH_SPEED = 2.5;   // м/с: толкает медленно
+const JAM_SHOVE = 7;          // м/с²: с какой силой спихивает стоящую машину вбок, с полосы
 const EXTRA_VEHICLES = 14;   // сколько машин сверх припаркованных и машин с водителями (брошенные и т.п.)
 const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;
@@ -202,8 +205,10 @@ class Vehicles {
       }
     } else if (wp.turn) target = Math.min(target, 4.5);
 
-    // машина впереди
-    let blockedByCar = false;
+    // машина впереди. Пробка (17.11.2026): упёрлась в стоящую не-поточную машину (брошенную, полицейскую, игрока) и стоит
+    // дольше JAM_PUSH - сама медленно толкает её и проезжает (раньше стояла и гудела каждые 2.5 с, пока её не уберут)
+    const pushing = v.jamT > JAM_PUSH;
+    let blockedByCar = false, stillBlocked = false;
     for (const o of this.list.values()) {
       if (o === v || o.dead) continue;
       const dx = o.x - v.x, dy = o.y - v.y;
@@ -211,10 +216,23 @@ class Vehicles {
       const f = dx * c + dy * s;
       if (f <= 0) continue;
       if (Math.abs(-dx * s + dy * c) > 1.9) continue;
+      // толкаем - эту машину не ждём: спихиваем её вбок, с полосы (а не гоним перед собой по всей улице);
+      // упёрлась намертво - продавливаемся мимо, её отодвигает понемногу (collidePair)
+      if (pushing && o.state !== 'traffic') {
+        if (f - 4.4 < 3) {
+          stillBlocked = true;
+          if (o.state === 'parked' || o.state === 'npc') {
+            const side = -dx * s + dy * c >= 0 ? 1 : -1; // в ту сторону, куда она и так смещена от середины полосы
+            o.sx += -s * side * JAM_SHOVE * dt; o.sy += c * side * JAM_SHOVE * dt;
+          }
+        }
+        continue;
+      }
       const gap = f - 4.4;
       const t2 = gap <= 0.3 ? 0 : Math.max(0, gap * 1.4 + (o.state === 'traffic' ? Math.max(0, o.v) * 0.6 : 0));
       if (t2 < target) { target = t2; blockedByCar = o.state !== 'traffic'; }
     }
+    if (pushing) target = Math.min(target, JAM_PUSH_SPEED);
     // человек на дороге впереди: водитель замечает не сразу, поэтому выскочившего прямо под колёса собьёт
     let person = false;
     for (const p of room.players.values()) {
@@ -227,19 +245,24 @@ class Vehicles {
       break;
     }
     if (!person && room.npcs.personAhead(v, c, s)) person = true; // прохожий переходит дорогу
+    // человека не давит: тормозит и сигналит один раз, пока он не уйдёт
     if (person) {
       v.seenT += dt;
       if (v.seenT > 0.35) {
         target = 0;
-        if (now - v.hornAt > 2.2) { v.hornAt = now; room.ev.hn.push(v.id); }
+        if (!v.personHonk) { v.personHonk = true; v.hornAt = now; room.ev.hn.push(v.id); }
       }
-    } else v.seenT = 0;
+    } else { v.seenT = 0; v.personHonk = false; }
 
     const prev = v.v;
     if (v.v < target) v.v = Math.min(target, v.v + 4.5 * dt); else v.v = Math.max(target, v.v - 13 * dt);
     v.brake = v.v < prev - 1e-3 || (target < 0.3 && v.v < 0.3);
     if (v.v < 0.3 && target < 0.3) v.stuckT += dt; else v.stuckT = 0;
-    if (blockedByCar && v.stuckT > 1.5 && now - v.hornAt > 2.5) { v.hornAt = now; room.ev.hn.push(v.id); }
+    // упёрлась в стоящую машину: один гудок в начале пробки, через JAM_PUSH - толкает; поехала - пробка кончилась
+    if (blockedByCar && !person) v.jamT = (v.jamT || 0) + dt;
+    else if (!pushing || !stillBlocked) v.jamT = 0; // протолкнулась - дальше обычным ходом
+    if (blockedByCar && v.stuckT > 1.5 && !v.jamHonk) { v.jamHonk = true; v.hornAt = now; room.ev.hn.push(v.id); }
+    if (v.v > 3) v.jamHonk = false;
     if (v.stuckT > 8 && !this.seenByHumans(v.x, v.y, 30)) { this.remove(v); return; }
 
     let move = v.v * dt, hx = 0, hy = 0;
@@ -332,9 +355,11 @@ class Vehicles {
     const aMov = dyn(a), bMov = dyn(b);
     if (aMov || bMov) {
       const ax0 = a.x, ay0 = a.y, bx0 = b.x, by0 = b.y;
-      if (aMov && bMov) { a.x += mtv[0] / 2; a.y += mtv[1] / 2; b.x -= mtv[0] / 2; b.y -= mtv[1] / 2; }
-      else if (aMov) { a.x += mtv[0]; a.y += mtv[1]; }
-      else { b.x -= mtv[0]; b.y -= mtv[1]; }
+      // глубокое перекрытие разводим понемногу (не больше 0.6 м за такт) - иначе машину выбрасывало сквозь стены
+      const kk = Math.min(1, 0.6 / ml), mx = mtv[0] * kk, my = mtv[1] * kk;
+      if (aMov && bMov) { a.x += mx / 2; a.y += my / 2; b.x -= mx / 2; b.y -= my / 2; }
+      else if (aMov) { a.x += mx; a.y += my; }
+      else { b.x -= mx; b.y -= my; }
       // в стену не выталкиваем: если некуда - остаётся на месте
       for (const [v, x0, y0] of [[a, ax0, ay0], [b, bx0, by0]]) {
         if (!dyn(v)) continue;

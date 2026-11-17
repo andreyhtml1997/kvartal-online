@@ -77,7 +77,13 @@
   const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4, STAR: 5, MONEY: 6 }; // STAR - звезда погашения розыска, MONEY - пачка денег
   // цены у кругов-чекпоинтов: больница - здоровье до 100, оружейный - случайное оружие с полным запасом,
   // автомастерская - перекраска, полный ремонт и снятие всех звёзд розыска (решения владельца 17.11.2026)
-  const SHOP_PRICE = { med: 50, gun: 100, fix: 1000 };
+  // med - цена каждых +10 здоровья (лечит сразу, порциями; полное лечение - $50); оружие - своя цена у каждого (GUN_PRICE)
+  const SHOP_PRICE = { med: 5, fix: 1000 };
+  // оружейный магазин: выбор на панели (решения владельца 17.11.2026); миниган - самый дорогой, к нему +1000 патронов
+  const GUN_PRICE = [];
+  GUN_PRICE[W.PISTOL] = 50; GUN_PRICE[W.UZI] = 120; GUN_PRICE[W.SHOTGUN] = 150; GUN_PRICE[W.RIFLE] = 200; GUN_PRICE[W.TRIPLE] = 200;
+  GUN_PRICE[W.GRENADE] = 200; GUN_PRICE[W.SAW] = 250; GUN_PRICE[W.SHIELD] = 250; GUN_PRICE[W.AUTOSHOT] = 300; GUN_PRICE[W.SNIPER] = 300;
+  GUN_PRICE[W.FLAMER] = 350; GUN_PRICE[W.LAUNCHER] = 500; GUN_PRICE[W.MINIGUN] = 1000;
   const TRIP = 10;                          // с: сколько действует съеденный гриб
   const ROLL = { SPEED: 7.5, TIME: 1.0 };  // выпрыгнул из машины быстрее SPEED м/с - катится по дороге TIME секунд
   // пустой набор оружия: кулаки есть всегда, остального нет (-1)
@@ -410,11 +416,17 @@
 
   function resolveCarTiles(map, car, res, ign) {
     const bx = boxOf(car);
+    if (!Number.isFinite(car.x) || !Number.isFinite(car.y)) return;
+    // за краем карты машине не место: возвращаем внутрь (иначе за границей её выталкивало всё дальше наружу)
+    car.x = Math.min(Math.max(car.x, 1), map.w - 1); car.y = Math.min(Math.max(car.y, 1), map.h - 1);
     for (let iter = 0; iter < 5; iter++) {
       const c = Math.cos(car.a), s = Math.sin(car.a);
       let hit = false;
-      for (let ty = Math.floor(car.y - 2.3); ty <= Math.floor(car.y + 2.3); ty++) {
-        for (let tx = Math.floor(car.x - 2.3); tx <= Math.floor(car.x + 2.3); tx++) {
+      // границы перебора - один раз на проход: машина сдвигается внутри цикла, и граница «от машины» убегала вместе
+      // с ней (17.11.2026: вдавленная в край карты машина вешала сервер бесконечным циклом)
+      const ty0 = Math.floor(car.y - 2.3), ty1 = Math.floor(car.y + 2.3), tx0 = Math.floor(car.x - 2.3), tx1 = Math.floor(car.x + 2.3);
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
           const t = carSolidAt(map, tx, ty);
           if (!t) continue;
           const k = ty * map.w + tx;
@@ -492,7 +504,7 @@
 
   return {
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
-    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, SHOP_PRICE, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, VEH, CAR_BOX, MOTO_BOX, boxOf, RAMMABLE, CRUSHABLE, RAM_SPEED,
+    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, SHOP_PRICE, GUN_PRICE, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, VEH, CAR_BOX, MOTO_BOX, boxOf, RAMMABLE, CRUSHABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
     obbTileMTV, obbObbMTV, pushOutOBB, pushOutSafe, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     applyImpulse, carContactPoint, carCollide,

@@ -54,43 +54,50 @@ const pk = room.addPickup(PK.MONEY, 0, me.x, me.y, 40);
 const m0 = me.money;
 assert.ok(room.tryPick(me, pk) && me.money === m0 + 40, 'пачку подбирают');
 
-// 3. оружейный: $100 - случайное оружие с полным запасом; стоять дальше - второй раз не покупает
+// 3. оружейный (17.11.2026): встал на круг - выбираешь на панели, у каждого оружия своя цена; уже есть - пополнить;
+// миниган - самый дорогой, +1000 патронов; без денег не продают; сошёл с круга - не продают
 function stand(kind, sec) {
   const s = m.shops.find(q => q.kind === kind);
   if (me.vehicle) { const v = room.vehicles.list.get(me.vehicle); v.x = s.x; v.y = s.y; me.x = s.x; me.y = s.y; } else room.teleport(me, s.x, s.y);
   for (let i = 0; i < Math.round(sec / (3 * DT)); i++) { room.time += 3 * DT; room.updateShops(); }
 }
 function leaveShop() { room.teleport(me, me.x + 8, me.y + 8); room.updateShops(); }
-me.money = 250; ws.shop.length = 0;
-const ammo0 = me.ammo.slice();
-stand('gun', 3.5);
-const bought = ws.shop.find(x => x.k === 'gun' && x.ok);
-console.log(`оружейный: куплено ${bought ? WEAPONS[bought.w].name : '-'} (патронов ${bought ? me.ammo[bought.w] : '-'}), осталось $${me.money}`);
-// полный запас; миниган - +1000 к тому, что было (запас до 10 000)
-const expect = w => (WEAPONS[w].noAmmo ? 0 : WEAPONS[w].shop ? Math.min(WEAPONS[w].max, Math.max(0, ammo0[w]) + WEAPONS[w].shop) : WEAPONS[w].max);
-assert.ok(bought && me.money === 150 && me.ammo[bought.w] === expect(bought.w), 'оружейный: оружие с полным запасом (миниган +1000) за $100, второй раз - только сойдя с круга');
-// миниган из магазина - +1000 к имеющимся
-me.ammo[W.MINIGUN] = 2500;
-const rw = room.randomWeapon;
-room.randomWeapon = () => W.MINIGUN;
-me.money = 100; ws.shop.length = 0;
-leaveShop(); stand('gun', 2);
-room.randomWeapon = rw;
-console.log(`оружейный, миниган при 2500 патронах: стало ${me.ammo[W.MINIGUN]}`);
-assert.strictEqual(me.ammo[W.MINIGUN], 3500, 'миниган из магазина - +1000 к имеющимся');
-me.money = 150; // дальше - как было после первой покупки
+const { GUN_PRICE } = KV;
+me.money = 400; ws.shop.length = 0; me.ammo[W.SHOTGUN] = -1;
+stand('gun', 0.3);
+const standBuys = ws.shop.filter(x => x.k === 'gun' && x.ok).length;
+room.buyGun(me, W.SHOTGUN);
+const shotOk = me.ammo[W.SHOTGUN] === WEAPONS[W.SHOTGUN].max && me.money === 400 - GUN_PRICE[W.SHOTGUN] && me.cur === W.SHOTGUN;
+room.buyGun(me, W.SHOTGUN);
+const fullNoCharge = me.money === 400 - GUN_PRICE[W.SHOTGUN] && ws.shop.some(x => x.have && x.w === W.SHOTGUN);
+room.buyGun(me, W.MINIGUN);
+const tooPoor = me.ammo[W.MINIGUN] < 0 && ws.shop.some(x => x.need === GUN_PRICE[W.MINIGUN]);
+me.money = 1000; me.ammo[W.MINIGUN] = 2500;
+room.buyGun(me, W.MINIGUN);
+const mini = me.ammo[W.MINIGUN];
+console.log(`оружейный: стоя ничего не куплено (${standBuys}); дробовик за $${GUN_PRICE[W.SHOTGUN]} - ${shotOk ? 'да' : 'нет'}; полный повторно - без денег ${fullNoCharge}; миниган без денег - ${tooPoor ? 'не продали' : 'продали'}; миниган при 2500 - стало ${mini}, осталось $${me.money}`);
+assert.ok(standBuys === 0 && shotOk && fullNoCharge && tooPoor, 'оружейный: выбор на панели, своя цена, полное не продаёт, без денег не продаёт');
+assert.ok(mini === 3500 && me.money === 0 && GUN_PRICE[W.MINIGUN] === Math.max(...GUN_PRICE.filter(Boolean)), 'миниган - самый дорогой, +1000 патронов');
 leaveShop();
+me.money = 500; me.ammo[W.RIFLE] = -1;
+room.buyGun(me, W.RIFLE);
+assert.ok(me.ammo[W.RIFLE] < 0 && me.money === 500, 'сошёл с круга - не продают');
+me.money = 150;
 
-// 4. больница: здоровье до 100 за $50; без денег - не лечит
+// 4. больница (17.11.2026): лечит сразу, как встал, по +10 здоровья каждые 0.1 с, $5 за каждые 10; без денег - не лечит
 me.hp = 40;
-stand('med', 2);
-console.log(`больница: здоровье ${me.hp}, осталось $${me.money}`);
-assert.ok(me.hp === 100 && me.money === 100, 'больница: здоровье до 100 за $50');
+stand('med', 0.35);
+const hpFast = me.hp;
+stand('med', 0.5);
+console.log(`больница: через 0.3 с здоровье ${hpFast}, через 0.8 с ${me.hp}, осталось $${me.money}`);
+assert.ok(hpFast >= 60 && hpFast < 100 && me.hp === 100 && me.money === 120, 'больница: быстро по +10, 60 здоровья за $30');
 leaveShop();
-me.hp = 30; me.money = 20; ws.shop.length = 0;
-stand('med', 2);
-assert.ok(me.hp === 30 && ws.shop.some(x => x.need === SHOP_PRICE.med), 'без денег больница не лечит');
+me.hp = 30; me.money = 12; ws.shop.length = 0;
+stand('med', 1);
+console.log(`больница без денег ($12): здоровье ${me.hp}, осталось $${me.money}`);
+assert.ok(me.hp === 50 && me.money === 2 && ws.shop.some(x => x.need === SHOP_PRICE.med), 'деньги кончились - лечение встаёт');
 leaveShop();
+me.money = 100;
 
 // 5. автомастерская: заезд с дороги своим ходом, потом $1000 - новый цвет, ремонт, звёзды сняты
 const g = m.shops.find(q => q.kind === 'fix');

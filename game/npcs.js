@@ -28,7 +28,8 @@ const WALK = 1.4, RUN = 6.2, JOG = 4.3;
 const STAR_HEAT = [0, 25, 90, 200, 380, 650];
 const POLICE_CAP = 7, AMB_CAP = 2;
 // вертолёт: прочность (2 ракеты в упор, 3 рядом или ~25 попаданий из автомата), сколько всего; танков всего
-const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 3;
+// танк на всю карту один (решение владельца 18.11.2026): пока он цел - у армии, у игрока или брошенный - другого нет
+const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 1;
 const HELI_BLAST = { r: 4.5, dmg: 140, tile: 420 };
 // вертолёт медленнее (было 14 м/с) и не стреляет - только кружит с прожектором и высаживает спецназ (решения владельца 17.11.2026)
 const HELI_SPEED = 8;
@@ -926,7 +927,7 @@ class Npcs {
       const mine = room.gang ? h => h.state === 'fly' && groupOf(h.target) === 'gang' : h => h.target === p.id && h.state === 'fly';
       if (s >= 3 && !this.unitFor(p.id, 'swat')) this.spawnUnit(p, 'swat');
       if (s >= 4 && this.helis.size < HELI_CAP && ![...this.helis.values()].some(mine)) this.spawnHeli(p);
-      if (s >= 5 && this.unitFor(p.id, 'tank') < 2 && this.unitFor(0, 'tank') < TANK_CAP) this.spawnUnit(p, 'tank');
+      if (s >= 5 && this.tanksOnMap() < TANK_CAP) this.spawnUnit(p, 'tank');
     }
   }
   // за кем высылать погоню: в одиночке - каждый, кто в розыске; в банде - один из живых, за кем сейчас гонятся меньше
@@ -945,6 +946,8 @@ class Npcs {
   }
   // сколько техники этого вида гонится за игроком (pid 0 - за всеми); вышедший спецназ тоже в деле:
   // пока бьются хотя бы двое бойцов, новый грузовик не едет
+  // все целые танки на карте, кто бы в них ни сидел (армия, игрок, никто)
+  tanksOnMap() { let n = 0; for (const v of this.room.vehicles.list.values()) if (!v.dead && v.kind === 'tank') n++; return n; }
   unitFor(pid, kind) {
     let n = 0;
     const role = kind === 'tank' ? 'tank' : 'police';

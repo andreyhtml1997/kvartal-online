@@ -278,6 +278,33 @@
       }
     }
     let stepAlt = 0, tripOut = null, placeAt = 0;
+    // помехи радио (17.11.2026): шипение с потрескиванием, пока станция ловится; заиграла - плавно стихают
+    let stat = null;
+    function radioStatic(onNow) {
+      if (!ac || !noise || !master) return;
+      const t = ac.currentTime;
+      if (onNow) {
+        if (!stat) {
+          const src = ac.createBufferSource(); src.buffer = noise; src.loop = true;
+          const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2300; bp.Q.value = 0.7;
+          const crackle = ac.createGain(); crackle.gain.value = 0.65;
+          const lfo = ac.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 11;
+          const lfoG = ac.createGain(); lfoG.gain.value = 0.35;
+          lfo.connect(lfoG); lfoG.connect(crackle.gain);
+          const g = ac.createGain(); g.gain.value = 0.0001;
+          src.connect(bp); bp.connect(crackle); crackle.connect(g); g.connect(master);
+          src.start(); lfo.start();
+          stat = { src, lfo, g };
+        }
+        stat.g.gain.cancelScheduledValues(t);
+        stat.g.gain.setTargetAtTime(0.12, t, 0.04);
+      } else if (stat) {
+        const s = stat; stat = null;
+        s.g.gain.cancelScheduledValues(t);
+        s.g.gain.setTargetAtTime(0.0001, t, 0.15);
+        setTimeout(() => { try { s.src.stop(); s.lfo.stop(); } catch (_) {} }, 900);
+      }
+    }
     return {
       init,
       get on() { return on; },
@@ -288,6 +315,7 @@
         return on;
       },
       loops,
+      radioStatic,
       ctx() { return ac; },
       loadedCount() { return FILES.filter(f => buf[f.replace(/\.wav$/, '')]).length; }, // только файлы (винт - синтез)
       shot(w, x, y) {
@@ -1016,9 +1044,21 @@
   // свои в режиме «Банда»: подписи и обводка на радаре
   const ALLY_COL = '#7dff9a';
 
+  // вид: обычно - дальше - ближе (V или кнопка «Вид» в шестерёнке), запоминается; переход плавный
+  const CAM_ZOOM = [{ k: 1, name: 'обычно' }, { k: 1.3, name: 'дальше' }, { k: 0.8, name: 'ближе' }];
+  let camZoomI = 0;
+  try { camZoomI = Math.max(0, Math.min(CAM_ZOOM.length - 1, Number(localStorage.getItem('kv_zoom')) | 0)); } catch (_) {}
+  function syncZoomBtn() { const b = $('btnZoom'); if (b) b.textContent = 'Вид: ' + CAM_ZOOM[camZoomI].name + (isTouch ? '' : ' (V)'); }
+  function cycleZoom() {
+    camZoomI = (camZoomI + 1) % CAM_ZOOM.length;
+    try { localStorage.setItem('kv_zoom', String(camZoomI)); } catch (_) {}
+    syncZoomBtn();
+    toast('Вид: ' + CAM_ZOOM[camZoomI].name, 1200);
+  }
+
   // Круги-чекпоинты: цвет, подпись с ценой, значок (крест, пистолет, гаечный ключ)
   const SHOP_COL = { med: '255,90,90', gun: '255,210,63', fix: '90,170,255' };
-  const SHOP_LABEL = { med: `Больница $${KV.SHOP_PRICE.med}`, gun: `Оружие $${KV.SHOP_PRICE.gun}`, fix: `Мастерская $${KV.SHOP_PRICE.fix}` };
+  const SHOP_LABEL = { med: `Больница: +10 за $${KV.SHOP_PRICE.med}`, gun: 'Оружейный', fix: `Мастерская $${KV.SHOP_PRICE.fix}` };
   function drawShopIcon(g, k, x, y, s) {
     g.save(); g.translate(x, y);
     if (k === 'med') {
@@ -1561,6 +1601,7 @@
     }
     function halt() {
       clearTimeout(timer);
+      Sound.radioStatic(false);
       try { el.pause(); } catch (_) {}
       if (el.getAttribute('src')) { el.removeAttribute('src'); try { el.load(); } catch (_) {} }
     }
@@ -1568,6 +1609,7 @@
       halt();
       if (!active || idx < 0 || !Sound.on || document.hidden) { state = 'off'; show(); return; }
       state = 'tuning'; show();
+      Sound.radioStatic(true);
       const my = ++gen;
       el.src = RADIO[idx].url;
       el.volume = 0.6;
@@ -1581,7 +1623,7 @@
       idx = (idx + dir + RADIO.length) % RADIO.length;
       tune();
     }
-    el.addEventListener('playing', () => { clearTimeout(timer); if (state === 'tuning') { state = 'on'; fails = 0; save(); show(); } });
+    el.addEventListener('playing', () => { clearTimeout(timer); if (state === 'tuning') { state = 'on'; fails = 0; save(); show(); Sound.radioStatic(false); } });
     // поток завис (ни ошибки, ни конца - тишина): ждёт данных дольше 12 с - следующая станция
     el.addEventListener('waiting', () => {
       if (state !== 'on') return;
@@ -1714,7 +1756,7 @@
       bm.classList.toggle('muted', muted);
       bm.setAttribute('aria-pressed', muted ? 'false' : 'true');
       bm.setAttribute('aria-label', muted ? 'Включить микрофон' : 'Выключить микрофон');
-      bm.title = muted ? 'Микрофон выключен (V)' : 'Микрофон включён (V)';
+      bm.title = muted ? 'Микрофон выключен (T)' : 'Микрофон включён (T)';
     }
     async function start() {
       if (on || starting) return;
@@ -1802,13 +1844,18 @@
     if (e.repeat && (e.code === 'KeyF' || e.code === 'KeyM' || e.code === 'KeyH')) return;
     input.keys.add(e.code);
     // 1-9, 0 - оружие по порядку на панели (на панели только то, что есть)
-    if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)) || 10; const o = ownedList(); if (o[n - 1] !== undefined) selectWeapon(o[n - 1]); }
+    if (e.code.startsWith('Digit')) {
+      const n = Number(e.code.slice(5)) || 10;
+      if (shopOpen) { if (SHOP_ORDER[n - 1] !== undefined) buyGun(SHOP_ORDER[n - 1]); }
+      else { const o = ownedList(); if (o[n - 1] !== undefined) selectWeapon(o[n - 1]); }
+    }
     else if (e.code === 'KeyQ') { if (S.me.vehicle) { if (!e.repeat) Radio.step(-1); } else cycleWeapon(-1); }
     else if (e.code === 'KeyE') { if (S.me.vehicle) { if (!e.repeat) Radio.step(1); } else cycleWeapon(1); }
     else if (e.code === 'KeyF') carAction();
     else if (e.code === 'KeyH') horn();
     else if (e.code === 'KeyM') showBig(!S.bigOpen);
-    else if (e.code === 'KeyV' && !e.repeat) Voice.toggleMute();
+    else if (e.code === 'KeyV' && !e.repeat) cycleZoom();
+    else if (e.code === 'KeyT' && !e.repeat) Voice.toggleMute();
     else if (e.code === 'Tab') { e.preventDefault(); showBoard(true); }
     else if (e.code === 'Escape') { showBoard(false); showBig(false); showGear(false); }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
@@ -2164,10 +2211,11 @@
       }
       case 'shop':
         // круги: больница, оружейный, автомастерская
-        if (m.need) toast(`Нужно $${m.need}`, 1800);
+        if (m.need) toast(m.paid ? `Вылечено на $${m.paid}, дальше нужно $${m.need}` : `Нужно $${m.need}`, 1800);
         else if (m.full) toast('Здоровье и так полное', 1500);
-        else if (m.k === 'med') { Sound.cash(); toast(`Больница: здоровье 100 (-$${m.ok})`, 2200); }
-        else if (m.k === 'gun') { Sound.cash(); toast(`Оружейный: ${WEAPONS[m.w].name} (-$${m.ok})`, 2400); }
+        else if (m.have) toast(WEAPONS[m.w].noAmmo ? `${WEAPONS[m.w].name} уже есть` : `${WEAPONS[m.w].name}: патронов и так полно`, 1600);
+        else if (m.k === 'med') { Sound.cash(); toast(m.part ? `Больница: подлечились (-$${m.ok})` : `Больница: здоровье 100 (-$${m.ok})`, 2000); }
+        else if (m.k === 'gun') { Sound.cash(); toast(`Куплено: ${WEAPONS[m.w].name} (-$${m.ok})`, 2000); }
         else { Sound.cash(); toast(`Мастерская: перекрашено, починено, розыск снят (-$${m.ok})`, 3000); }
         updateHud(true);
         break;
@@ -2581,6 +2629,60 @@
     });
   })();
 
+  // ======================================================================
+  // Оружейный магазин (17.11.2026): встал на круг - под полоской оружия панель со всем оружием и ценами;
+  // нажал (или цифру 1-9, 0 - по порядку на панели) - купил. Сошёл с круга - панель закрылась. Проверяет сервер.
+  // ======================================================================
+  const SHOP_ORDER = WEAPONS.map(w => w.id).filter(i => KV.GUN_PRICE[i] > 0).sort((a, b) => KV.GUN_PRICE[a] - KV.GUN_PRICE[b]);
+  const shopItems = [];
+  (function buildShopPanel() {
+    const grid = $('shopGrid');
+    SHOP_ORDER.forEach((w, n) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sp-item';
+      b.innerHTML = `${n < 10 ? `<span class="k">${(n + 1) % 10}</span>` : ''}${ICONS[w]}<span class="nm">${WEAPONS[w].name}</span><span class="pr">$${KV.GUN_PRICE[w]}</span>`;
+      b.title = `${WEAPONS[w].name} - $${KV.GUN_PRICE[w]}`;
+      b.setAttribute('aria-label', `Купить: ${WEAPONS[w].name}, $${KV.GUN_PRICE[w]}`);
+      onPress(b, () => buyGun(w));
+      grid.appendChild(b);
+      shopItems.push({ w, b });
+    });
+  })();
+  let shopOpen = false, shopSig = '';
+  function buyGun(w) { if (shopOpen) send({ t: 'buy', w }); }
+  function atGunShop() {
+    if (!S.inGame || !S.me.alive || S.me.vehicle) return false;
+    for (const [k, x, y, r] of S.shops || []) if (k === 'gun' && Math.hypot(S.me.x - x, S.me.y - y) <= r) return true;
+    return false;
+  }
+  // под полоской оружия, между радаром и здоровьем; в портрете - на всю ширину под здоровьем; узко - без названий
+  function layoutShopPanel() {
+    const pnl = $('shopPanel');
+    const mr = mini.getBoundingClientRect(), tb = document.querySelector('.hud-tr').getBoundingClientRect(), wb = $('weaponBar').getBoundingClientRect();
+    let L = mr.right + 8, R = tb.left - 8, top = wb.bottom + 6;
+    if (R - L < 220) { L = 8; R = cw - 8; top = Math.max(wb.bottom, tb.bottom) + 6; }
+    const width = Math.min(R - L, 600);
+    pnl.classList.toggle('compact', width < 430);
+    pnl.style.left = Math.round(L + (R - L - width) / 2) + 'px';
+    pnl.style.width = Math.round(width) + 'px';
+    pnl.style.top = Math.round(top) + 'px';
+  }
+  function updateShopPanel() {
+    const open = atGunShop();
+    if (open !== shopOpen) { shopOpen = open; $('shopPanel').hidden = !open; shopSig = ''; if (open) layoutShopPanel(); }
+    if (!open) return;
+    const sig = S.money + '|' + S.me.ammo.join(',');
+    if (sig === shopSig) return;
+    shopSig = sig;
+    for (const { w, b } of shopItems) {
+      const ww = WEAPONS[w], full = ww.noAmmo ? S.me.ammo[w] >= 0 : S.me.ammo[w] >= ww.max;
+      b.classList.toggle('full', full);
+      b.classList.toggle('poor', !full && S.money < KV.GUN_PRICE[w]);
+      b.querySelector('.pr').textContent = full ? (ww.noAmmo ? 'есть' : 'полно') : '$' + KV.GUN_PRICE[w];
+    }
+  }
+
   // Полоска оружия: по центру экрана, как было, если помещается между радаром и здоровьем. Иначе (телефон, много оружия)
   // ячейки ужимаются и полоска встаёт в свободный промежуток; не влезает и так - листается пальцем, выбранное оружие
   // прокручивается в поле зрения. В портрете промежутка нет - полоска под здоровьем. (17.11.2026: на телефоне с 14 видами
@@ -2738,6 +2840,8 @@
     $('btnSound').textContent = Sound.on ? 'Звук: включён' : 'Звук: выключен';
   }
   $('btnSound').addEventListener('click', () => { Sound.init(); Sound.toggle(); syncSoundBtn(); Radio.sync(); });
+  $('btnZoom').addEventListener('click', () => cycleZoom());
+  syncZoomBtn();
   syncSoundBtn();
   $('btnInvite').addEventListener('click', async () => {
     showGear(false);
@@ -2791,32 +2895,21 @@
     g.moveTo(x, y - s); g.lineTo(x + s * 0.9, y - s * 0.55); g.lineTo(x + s * 0.7, y + s * 0.5); g.lineTo(x, y + s); g.lineTo(x - s * 0.7, y + s * 0.5); g.lineTo(x - s * 0.9, y - s * 0.55);
     g.closePath(); g.fill(); g.stroke();
   }
-  function drawRings(g, x, y, r, rgbStr, t, seed) {
-    for (let i = 0; i < 2; i++) {
-      const k = (t * 0.9 + i * 0.5 + seed * 0.13) % 1;
-      g.strokeStyle = `rgba(${rgbStr},${(1 - k) * 0.85})`;
-      g.lineWidth = Math.max(1, r * 0.15);
-      g.beginPath(); g.arc(x, y, r * (0.9 + k * 1.6), 0, Math.PI * 2); g.stroke();
-    }
-  }
+  // значок вещи на радаре и карте: без расходящихся кругов (решение владельца 17.11.2026 - «слишком мерцает»),
+  // оружие просто мигает
   function drawPickupIcon(g, pk, x, y, s, t) {
     if (pk.kind === PK.WEAPON) {
-      drawRings(g, x, y, s, '255,210,63', t, pk.id);
       const blink = 0.55 + 0.45 * Math.sin(t * 7 + pk.id);
       g.globalAlpha = blink;
       drawPistolIcon(g, x, y, s, '#ffd23f');
       g.globalAlpha = 1;
     } else if (pk.kind === PK.HEALTH) {
-      drawRings(g, x, y, s, '255,80,80', t, pk.id);
       drawMedIcon(g, x, y, s * 0.85);
     } else if (pk.kind === PK.ARMOR) {
-      drawRings(g, x, y, s, '110,180,255', t, pk.id);
       drawArmorIcon(g, x, y, s * 0.9);
     } else if (pk.kind === PK.SHROOM) {
-      drawRings(g, x, y, s, '255,90,200', t, pk.id);
       drawShroomIcon(g, x, y + s * 0.1, s * 0.95);
     } else if (pk.kind === PK.STAR) {
-      drawRings(g, x, y, s, '90,170,255', t, pk.id);
       drawStarIcon(g, x, y, s * 1.1, t);
     } else if (pk.kind === PK.MONEY) {
       drawMoneyIcon(g, x, y, s * 0.8);
@@ -2864,12 +2957,12 @@
       g.lineWidth = 2 * u;
       g.beginPath(); g.arc(toX(b.x), toY(b.y), (3 + 10 * t) * u, 0, Math.PI * 2); g.stroke();
     }
-    // вещи: мигающий пистолет с кругами, аптечка, бронежилет; за краем радара - стрелка
+    // вещи: мигающий пистолет (без кругов), аптечка, бронежилет; за краем радара - стрелка
     const tsec = now / 1000;
     for (const pk of S.pickups.values()) {
       const px = toX(pk.x), py = toY(pk.y);
       const inside = px >= 0 && py >= 0 && px <= size && py <= size;
-      if (inside) drawPickupIcon(g, pk, px, py, (pk.kind === PK.AMMO ? 4 : 6) * u, tsec);
+      if (inside) drawPickupIcon(g, pk, px, py, (pk.kind === PK.AMMO ? 3.2 : 4.6) * u, tsec);
       else if (!full && pk.kind !== PK.AMMO && pk.kind !== PK.MONEY) {
         const dx = pk.x - cx, dy = pk.y - cy, d = Math.hypot(dx, dy);
         if (d > 70) continue;
@@ -3013,17 +3106,18 @@
       g.fillStyle = '#ffffff'; g.strokeStyle = '#000'; g.lineWidth = Math.max(1, u);
       g.beginPath(); g.moveTo(z, 0); g.lineTo(-z * 0.7, z * 0.65); g.lineTo(-z * 0.35, 0); g.lineTo(-z * 0.7, -z * 0.65); g.closePath(); g.fill(); g.stroke();
       g.restore();
+      drawMapName(g, 'ты', toX(S.me.x), toY(S.me.y) - z - 1.5 * u, u, '#ffd23f');
     }
   }
 
-  function drawMapName(g, name, x, y, u) {
-    g.font = `700 ${Math.round(9 * u)}px system-ui, sans-serif`;
+  function drawMapName(g, name, x, y, u, col) {
+    g.font = `700 ${Math.max(8, Math.round(7 * u))}px system-ui, sans-serif`;
     g.textAlign = 'center';
     g.textBaseline = 'bottom';
-    g.lineWidth = Math.max(2, 2.5 * u);
+    g.lineWidth = Math.max(2, 2.2 * u);
     g.strokeStyle = 'rgba(0,0,0,0.85)';
     g.strokeText(name, x, y);
-    g.fillStyle = '#ffffff';
+    g.fillStyle = col || '#ffffff';
     g.fillText(name, x, y);
   }
 
@@ -3095,6 +3189,7 @@
     S.leaving = true;
     Voice.stop(true);
     Radio.leave();
+    shopOpen = false; $('shopPanel').hidden = true;
     if (S.ws) { try { S.ws.close(); } catch (_) {} }
     S.ws = null;
     S.inGame = false;
@@ -3384,6 +3479,7 @@
     updateEngines();
     const inCar = !!(S.me.vehicle && S.me.alive && S.inGame);
     if (inCar !== Radio.active) { if (inCar) Radio.enter(); else Radio.leave(); }
+    updateShopPanel();
     updateLoops(now);
     if (now >= S.mmNext) {
       S.mmNext = now + 66;
@@ -3452,14 +3548,16 @@
 
   function render(now, dt) {
     const map = S.map;
-    // камера всегда держит игрока по центру; за рулём на скорости немного отъезжает
-    let zoom = 1;
-    if (S.me.alive && S.me.vehicle && S.car) zoom = 1 + 0.45 * Math.min(1, Math.abs(S.car.v) / CAR.MAX);
-    else if (S.me.alive) zoom = WEAPONS[S.me.cur].zoom || 1;
-    S.zoomR += (KV.VIEW_RADIUS * zoom - S.zoomR) * Math.min(1, dt * 3);
-    const want = Math.max(6, Math.round(Math.min(canvas.width, canvas.height) / (2 * S.zoomR)));
+    // камера всегда держит игрока по центру; за рулём на скорости немного отъезжает; V - ближе/обычно/дальше
+    let zoom = CAM_ZOOM[camZoomI].k;
+    if (S.me.alive && S.me.vehicle && S.car) zoom *= 1 + 0.45 * Math.min(1, Math.abs(S.car.v) / CAR.MAX);
+    else if (S.me.alive) zoom *= WEAPONS[S.me.cur].zoom || 1;
+    S.zoomR += (KV.VIEW_RADIUS * zoom - S.zoomR) * Math.min(1, dt * 2.2); // мягко, ~1.5 с до нового вида
+    // мир рисуется непрерывным масштабом - приближение плавное (17.11.2026: со снайперкой камера прыгала ступенями);
+    // куски карты кэшируются ступенчатым S.tp и просто растягиваются - перерисовка кэша не каждый кадр
+    const tp = Math.max(6, Math.min(canvas.width, canvas.height) / (2 * S.zoomR));
+    const want = Math.round(tp);
     if (!S.tp || Math.abs(want - S.tp) / S.tp > 0.07) S.tp = want;
-    const tp = S.tp;
     const hw = canvas.width / 2 / tp, hh = canvas.height / 2 / tp;
     let camX = S.cam.x, camY = S.cam.y;
     if (S.shake > 0) { camX += (Math.random() - 0.5) * S.shake * 0.5; camY += (Math.random() - 0.5) * S.shake * 0.5; }
@@ -3488,7 +3586,7 @@
       ctx.transform(tp, 0, 0, tp, ox, oy);
     } else ctx.setTransform(tp, 0, 0, tp, ox, oy);
     ctx.imageSmoothingEnabled = true;
-    drawChunks(x0, y0, x1, y1, tp);
+    drawChunks(x0, y0, x1, y1, S.tp);
     drawDecals(now, inView);
     const tsec = now / 1000;
     for (const pk of S.pickups.values()) if (inView(pk.x - 2, pk.y - 2, 4, 4)) drawPickup(pk, tsec);

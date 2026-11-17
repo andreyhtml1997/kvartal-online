@@ -152,7 +152,7 @@ console.log(`сбиваем ракетами: ракет ${rockets}, верто�
 assert.ok((h2.state === 'fall' || !N.helis.has(h2.id)) && rockets <= 3, 'вертолёт сбивают 2-3 ракеты');
 run(2);
 
-// 6. пять звёзд - танки: едут к игроку, не больше двух на игрока; вражеские танки не стреляют (только давят)
+// 6. пять звёзд - танк: едет к игроку; на всю карту танк один (18.11.2026); вражеский танк не стреляет (только давит)
 N.crime(me, STAR_HEAT[5] - me.heat + 1);
 assert.strictEqual(me.stars, 5, 'пять звёзд');
 let tank = null, tankMinD = 1e9, tanksMax = 0;
@@ -166,7 +166,7 @@ run(60, () => {
     tankMinD = Math.min(tankMinD, Math.hypot(v.x - me.x, v.y - me.y));
   }
   tanksMax = Math.max(tanksMax, n);
-  if (tankMinD < 12 && tanksMax >= 2) return false;
+  if (tankMinD < 12 && tanksMax >= 1) return false;
 });
 const shells = shots.slice(s6).filter(s => s.owner === NPC_ID - K.ARMY && s.w === W.LAUNCHER);
 const mm6 = ws.keep.filter(x => x.t === 'mm').pop();
@@ -174,8 +174,23 @@ console.log(`танки: приехал ${!!tank} (прочность ${tank && 
   `снарядов ${shells.length}, из-за края экрана ${shells.filter(s => s.off).length}; на радаре ${mm6 && mm6.tk ? mm6.tk.length : 0}`);
 assert.ok(tank && tank.maxHp === KV.VEH.tank.hp && tank.crush, 'на 5 звёздах едет танк');
 assert.ok(shells.length === 0, 'вражеский танк не стреляет');
-assert.ok(tanksMax <= 2, 'не больше двух танков на одного игрока');
+assert.ok(tanksMax <= 1, 'танк на всю карту один (решение владельца 18.11.2026)');
 assert.ok(mm6 && mm6.tk && mm6.tk.length >= 1, 'танк виден на радаре');
+
+// игрок угнал единственный танк - других не высылают, пока этот цел
+{
+  const only = [...room.vehicles.list.values()].find(v => v.kind === 'tank' && !v.dead);
+  if (only.state === 'npc') for (const id of [...(only.crew || [])]) { const n = N.list.get(id); if (n) N.remove(n); }
+  only.crew = []; only.state = 'parked'; only.role = null;
+  room.teleport(me, only.x + KV.CAR.HW + 0.8, only.y);
+  me.vehicle = 0;
+  room.vehicles.enter(me, only.id);
+  run(25);
+  const tanks = [...room.vehicles.list.values()].filter(v => v.kind === 'tank' && !v.dead).length;
+  console.log(`игрок в танке (${me.vehicle === only.id ? 'сел' : 'не сел'}), звёзд ${me.stars}: танков на карте ${tanks}`);
+  assert.ok(me.vehicle === only.id && tanks === 1, 'игрок в единственном танке - другие танки не приезжают');
+  room.vehicles.exit(me, true);
+}
 
 const ms = Number(process.hrtime.bigint() - t0) / 1e6;
 console.log(`такт с техникой: ${(ms / ticks).toFixed(3)} мс; жителей ${N.list.size}, машин ${room.vehicles.list.size}`);

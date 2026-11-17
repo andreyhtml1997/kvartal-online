@@ -129,6 +129,32 @@ input[type="text"] {
 .slot.active { border-color: var(--accent); background: rgba(255, 210, 63, 0.22); color: var(--accent); }
 .slot.empty .c { color: var(--hp); }
 
+/* оружейный магазин: панель выбора под полоской оружия (встал на круг - открылась, сошёл - закрылась) */
+.shop-panel {
+  position: absolute; pointer-events: auto; padding: 8px; border-radius: 12px; background: rgba(10, 12, 16, 0.88);
+  border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.sp-title { margin: 0 2px 6px; font: 700 13px/1.2 system-ui, sans-serif; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.sp-item {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 4px 5px;
+  border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.06); color: #fff;
+  font: 600 12px/1.1 system-ui, sans-serif; cursor: pointer; touch-action: manipulation;
+}
+.sp-item:hover { background: rgba(255, 255, 255, 0.12); }
+.sp-item:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sp-item svg { width: 34px; height: 17px; }
+.sp-item .nm { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sp-item .pr { color: #7dff9a; font-weight: 800; white-space: nowrap; }
+.sp-item .k { position: absolute; top: 2px; left: 5px; font-size: 10px; color: var(--muted); }
+.sp-item.poor { opacity: 0.5; }
+.sp-item.poor .pr { color: var(--hp); }
+.sp-item.full .pr { color: var(--muted); }
+.shop-panel.compact .sp-grid { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 4px; }
+.shop-panel.compact .sp-item { padding: 5px 2px 4px; }
+.shop-panel.compact .sp-item .nm, .shop-panel.compact .sp-item .k { display: none; }
+.shop-panel.compact .sp-item svg { width: 28px; height: 14px; }
+
 /* здоровье, броня, выносливость и шестерёнка справа вверху */
 .hud-tr { position: absolute; top: max(8px, var(--safe-t)); right: max(8px, var(--safe-r)); display: flex; align-items: flex-start; gap: 6px; }
 .vitals { display: flex; flex-direction: column; gap: 4px; width: calc(150px * var(--hud)); }

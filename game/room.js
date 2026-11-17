@@ -23,7 +23,8 @@ const HELI_BULLET = 1;          // пули по вертолёту - доля �
 const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
 const BURN_DMG = 6;             // урон горящему игроку за 0.25 с (огнемёт вдвое сильнее - 17.11.2026; было 3)
 const MED_EVERY = [20, 28];     // с: отдельные аптечки сверх обычных припасов - аптечек вдвое больше (17.11.2026)
-const SHOP_TIME = { med: 1.5, gun: 1.5, fix: 2 }; // с: сколько постоять на круге, чтобы купить
+const SHOP_TIME = { fix: 2 };   // с: сколько постоять в мастерской; больница лечит сразу, оружейный - по выбору на панели
+const MED_STEP = 10;            // больница: столько здоровья за одну порцию (каждые 0.1 с)
 const GRENADE_DRAG = 2.2;       // 1/с: брошенная граната тормозит и за ~2 с долетает до точки прицела
 const SHROOM_DMG = 0.5;         // какая доля урона доходит, пока действует гриб (решение владельца 17.11.2026)
 const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
@@ -269,6 +270,7 @@ class Room {
         break;
       }
       case 'enter': if (p.alive && !p.vehicle) this.vehicles.enter(p, msg.id | 0); break;
+      case 'buy': if (!p.isBot) this.buyGun(p, msg.w | 0); break;
       case 'exit': if (p.vehicle) this.vehicles.exit(p, false); break;
       case 'horn':
         if (p.vehicle && this.time - p.hornAt > 0.5) { p.hornAt = this.time; this.ev.hn.push(p.vehicle); }
@@ -300,6 +302,8 @@ class Room {
         if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; else if (w.noAmmo) p.ammo[w.id] = 0; }
         if (msg.god) p.prot = this.time + 600;
         if (msg.immortal) p.godUntil = this.time + 600; // не снимается стрельбой (для проверок под огнём)
+        if (msg.money !== undefined) p.money = Math.max(0, Number(msg.money) || 0);
+        if (msg.hp !== undefined) p.hp = Math.max(1, Math.min(KV.MAX_HP, Number(msg.hp) || 1));
         if (Array.isArray(msg.tpTo) && !p.vehicle) { const q = KV.collideCircle(this.map, Number(msg.tpTo[0]) || p.x, Number(msg.tpTo[1]) || p.y, KV.PLAYER_R); this.teleport(p, q[0], q[1]); }
         if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
         if (msg.shroom) {
@@ -1229,36 +1233,64 @@ class Room {
         if ((s.kind === 'fix') !== !!p.vehicle || Math.hypot(p.x - s.x, p.y - s.y) > s.r) continue;
         at = i; break;
       }
-      if (at !== p.shopAt) { p.shopAt = at; p.shopT = 0; p.shopDone = false; continue; }
-      if (at < 0 || p.shopDone) continue;
+      if (at !== p.shopAt) {
+        if (p.healPaid) { this.send(p, { t: 'shop', k: 'med', ok: p.healPaid, part: 1 }); p.healPaid = 0; }
+        p.shopAt = at; p.shopT = 0; p.shopDone = false; p.shopMsg = 0;
+        if (at < 0) continue;
+      }
+      if (at < 0) continue;
+      const s = shops[at];
+      if (s.kind === 'med') { this.heal(p); continue; }   // больница лечит сразу, порциями
+      if (s.kind === 'gun' || p.shopDone) continue;       // оружейный: игрок выбирает на панели (сообщение buy)
       p.shopT += 3 * DT;
-      if (p.shopT >= SHOP_TIME[shops[at].kind]) { p.shopDone = true; this.buy(p, shops[at]); }
+      if (p.shopT >= SHOP_TIME[s.kind]) { p.shopDone = true; this.buy(p, s); }
     }
+  }
+  // Больница (17.11.2026): лечит сразу, как встал на круг, - по +10 здоровья каждые 0.1 с, $5 за каждые 10
+  // (полное лечение - те же $50). Деньги кончились - лечение встаёт, надпись одна.
+  heal(p) {
+    if (p.hp >= KV.MAX_HP) {
+      if (p.healPaid) { this.send(p, { t: 'shop', k: 'med', ok: p.healPaid }); p.healPaid = 0; }
+      else if (!(p.shopMsg & 1)) { p.shopMsg |= 1; this.send(p, { t: 'shop', k: 'med', full: 1 }); }
+      return;
+    }
+    const add = Math.min(MED_STEP, KV.MAX_HP - p.hp);
+    const cost = Math.ceil(KV.SHOP_PRICE.med * add / MED_STEP);
+    if ((p.money || 0) < cost) {
+      if (!(p.shopMsg & 2)) { p.shopMsg |= 2; this.send(p, { t: 'shop', k: 'med', need: cost, paid: p.healPaid || 0 }); p.healPaid = 0; }
+      return;
+    }
+    p.hp = Math.min(KV.MAX_HP, p.hp + add);
+    p.money -= cost;
+    p.healPaid = (p.healPaid || 0) + cost;
+  }
+  // Оружейный (17.11.2026): игрок выбирает на панели, у каждого оружия своя цена; уже есть - пополнить до полного
+  // (миниган - +1000, запас до 10 000); щит второй не нужен
+  buyGun(p, w) {
+    const shops = this.map.shops || [];
+    const s = p.shopAt >= 0 ? shops[p.shopAt] : null;
+    if (!p.alive || p.vehicle || !s || s.kind !== 'gun' || Math.hypot(p.x - s.x, p.y - s.y) > s.r + 0.4) return;
+    const ww = WEAPONS[w], price = KV.GUN_PRICE[w];
+    if (!ww || !(price > 0)) return;
+    if (ww.noAmmo ? p.ammo[w] >= 0 : p.ammo[w] >= ww.max) { this.send(p, { t: 'shop', k: 'gun', have: 1, w }); return; }
+    if ((p.money || 0) < price) { this.send(p, { t: 'shop', k: 'gun', need: price, w }); return; }
+    if (ww.noAmmo) p.ammo[w] = 0;
+    else p.ammo[w] = ww.shop ? Math.min(ww.max, Math.max(0, p.ammo[w]) + ww.shop) : ww.max;
+    p.cur = w; p.spinT = 0;
+    p.money -= price;
+    this.send(p, { t: 'shop', k: 'gun', ok: price, w });
   }
   buy(p, s) {
     const price = KV.SHOP_PRICE[s.kind];
     if ((p.money || 0) < price) { this.send(p, { t: 'shop', k: s.kind, need: price }); return; }
-    let w = 0;
-    if (s.kind === 'med') {
-      if (p.hp >= KV.MAX_HP) { this.send(p, { t: 'shop', k: s.kind, full: 1 }); return; }
-      p.hp = KV.MAX_HP;
-    } else if (s.kind === 'gun') {
-      w = this.randomWeapon();
-      const ww = WEAPONS[w];
-      // полный запас; миниган - +1000 к тому, что есть (запас до 10 000)
-      if (ww.noAmmo) p.ammo[w] = Math.max(0, p.ammo[w]);
-      else p.ammo[w] = ww.shop ? Math.min(ww.max, Math.max(0, p.ammo[w]) + ww.shop) : ww.max;
-      p.cur = w; p.spinT = 0;
-    } else {
-      // автомастерская: новый цвет, полный ремонт (и пожар потушен), все звёзды розыска сняты - погоня уезжает
-      const v = this.vehicles.list.get(p.vehicle);
-      if (!v) return;
-      v.color = (v.color + 1 + Math.floor(Math.random() * 7)) % 8;
-      v.hp = v.maxHp || CAR.HP; v.burn = 0;
-      this.npcs.clearStars(p);
-    }
+    // автомастерская: новый цвет, полный ремонт (и пожар потушен), все звёзды розыска сняты - погоня уезжает
+    const v = this.vehicles.list.get(p.vehicle);
+    if (!v) return;
+    v.color = (v.color + 1 + Math.floor(Math.random() * 7)) % 8;
+    v.hp = v.maxHp || CAR.HP; v.burn = 0;
+    this.npcs.clearStars(p);
     p.money -= price;
-    this.send(p, { t: 'shop', k: s.kind, ok: price, w });
+    this.send(p, { t: 'shop', k: s.kind, ok: price });
   }
 
   // ---------- рассылка ----------
