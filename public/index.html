@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#121419">
+  <meta name="description" content="Квартал - онлайн-перестрелка в городе с видом сверху. Каждый раз новая карта, разрушаемые стены, оружие появляется на улицах. Играйте с друзьями по ссылке на телефоне и компьютере.">
+  <title>Квартал - перестрелка в городе</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap">
+  <script>
+    // Настройки доступности применяем до отрисовки, чтобы не мигало
+    try {
+      var s = JSON.parse(localStorage.getItem('kv_a11y') || '{}');
+      ['contrast', 'large', 'motion', 'underline'].forEach(function (k) { if (s[k]) document.documentElement.classList.add('xx-a11y-' + k); });
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Игровое поле"></canvas>
+
+  <!-- ИГРОВОЙ ИНТЕРФЕЙС -->
+  <div id="hud" hidden>
+    <div class="hud-tl">
+      <div class="bar hp" aria-label="Здоровье"><span id="hpFill"></span><b id="hpText">100</b></div>
+      <div class="bar ar" aria-label="Броня"><span id="arFill"></span><b id="arText">0</b></div>
+      <div class="score" id="scoreText">Убийств 0 · Смертей 0</div>
+    </div>
+
+    <div class="hud-top">
+      <div id="weaponBar" role="toolbar" aria-label="Оружие"></div>
+    </div>
+
+    <div class="hud-tr">
+      <div class="hud-buttons">
+        <button type="button" id="btnInvite" class="hbtn">Пригласить</button>
+        <button type="button" id="btnBoard" class="hbtn">Счёт</button>
+        <button type="button" id="btnSound" class="hbtn" aria-pressed="true">Звук</button>
+        <button type="button" id="btnExit" class="hbtn">Выход</button>
+      </div>
+      <ul id="feed" aria-live="polite"></ul>
+    </div>
+
+    <canvas id="minimap" aria-label="Миникарта"></canvas>
+    <button type="button" id="btnNextWeapon" class="round-btn" aria-label="Следующее оружие">⇄</button>
+    <div id="toast" role="status"></div>
+    <div id="rotateHint" hidden>Поверните телефон горизонтально - так видно больше</div>
+
+    <div id="deathScreen" hidden>
+      <div class="death-title" id="deathBy">Вас убили</div>
+      <div class="death-sub" id="respawnIn"></div>
+    </div>
+
+    <div id="board" hidden>
+      <div class="board-card">
+        <div class="board-head"><strong>Счёт</strong><span id="boardRoom"></span></div>
+        <table>
+          <thead><tr><th>Игрок</th><th>Убийств</th><th>Смертей</th></tr></thead>
+          <tbody id="boardBody"></tbody>
+        </table>
+        <button type="button" id="btnBoardClose" class="btn small">Закрыть</button>
+      </div>
+    </div>
+
+    <div id="lost" hidden>
+      <div class="board-card">
+        <p><strong>Связь с сервером потеряна</strong></p>
+        <button type="button" id="btnReconnect" class="btn primary">Переподключиться</button>
+        <button type="button" id="btnLostMenu" class="btn small">В меню</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- МЕНЮ -->
+  <main id="menu">
+    <div class="menu-card">
+      <h1 class="logo">КВАРТАЛ</h1>
+      <p class="tag">Перестрелка в городе с видом сверху. Каждый раз новая карта, оружие появляется на улицах, а стены можно разнести.</p>
+
+      <label class="lbl" for="nameInput">Ваше имя</label>
+      <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="Игрок" spellcheck="false">
+
+      <div id="inviteBlock" hidden>
+        <p class="invite">Вас пригласили в комнату <b id="inviteRoom"></b></p>
+        <button type="button" id="btnJoin" class="btn primary">Играть</button>
+        <button type="button" id="btnNewRoom" class="btn small">Создать свою комнату</button>
+      </div>
+
+      <div id="createBlock">
+        <button type="button" id="btnCreate" class="btn primary">Создать комнату</button>
+        <div class="or">или войдите по коду комнаты</div>
+        <div class="row">
+          <input id="codeInput" type="text" maxlength="16" placeholder="Код комнаты" autocapitalize="off" autocomplete="off" spellcheck="false">
+          <button type="button" id="btnCode" class="btn">Войти</button>
+        </div>
+      </div>
+
+      <p id="menuStatus" role="status" aria-live="polite"></p>
+
+      <details class="help">
+        <summary>Как играть</summary>
+        <ul>
+          <li><b>Компьютер:</b> WASD - ходить, мышь - целиться, левая кнопка - стрелять, 1-6 или колесо - оружие, Tab - счёт.</li>
+          <li><b>Телефон:</b> левый палец - ходить, правый палец - целиться и стрелять (короткое касание - один выстрел), ⇄ - сменить оружие.</li>
+          <li>Оружие и патроны появляются на карте примерно раз в 15 секунд. Аптечки и бронежилеты - реже.</li>
+          <li>Ломается всё: стёкла, заборы, ящики, деревья, кирпичные стены. Бочки и машины взрываются.</li>
+          <li>Зайдите в дом - крыша станет прозрачной. Тех, кто внутри, снаружи не видно.</li>
+          <li>Кто стреляет, тот на пару секунд виден всем на миникарте красной точкой.</li>
+        </ul>
+      </details>
+    </div>
+  </main>
+
+  <!-- ДОСТУПНОСТЬ -->
+  <button type="button" id="a11yBtn" aria-controls="a11yPanel" aria-expanded="false" aria-label="Настройки доступности">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="4" r="2" fill="currentColor"/><path d="M5 8.5l7 1.5 7-1.5M12 10v5m0 0l-3.5 6M12 15l3.5 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+  </button>
+  <div id="a11yPanel" role="dialog" aria-modal="false" aria-labelledby="a11yTitle" hidden>
+    <div class="a11y-title" id="a11yTitle">Доступность</div>
+    <button type="button" class="a11y-opt" data-k="contrast" aria-pressed="false">Высокий контраст</button>
+    <button type="button" class="a11y-opt" data-k="large" aria-pressed="false">Крупный текст</button>
+    <button type="button" class="a11y-opt" data-k="motion" aria-pressed="false">Меньше тряски и анимаций</button>
+    <button type="button" class="a11y-opt" data-k="underline" aria-pressed="false">Подчёркивать ссылки</button>
+    <button type="button" id="a11yReset" class="a11y-reset">Сбросить</button>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

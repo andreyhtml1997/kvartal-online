@@ -1,0 +1,17 @@
+{
+  "name": "kvartal-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Квартал - онлайн-перестрелка в городе с видом сверху: случайная карта, разрушаемые стены, оружие на улицах, комнаты по ссылке",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/mapgen.test.js && node test/sim.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
