@@ -573,7 +573,14 @@ class Npcs {
       const moved = v.lastPos ? Math.hypot(v.x - v.lastPos[0], v.y - v.lastPos[1]) : 99;
       v.lastPos = [v.x, v.y];
       v.stillT = moved < 1 ? (v.stillT || 0) + 0.5 : 0;
-      if (v.stillT > 10 && !this.seen(v.x, v.y, 4)) this.removeCar(v);
+      if (v.stillT > 10 && !this.seen(v.x, v.y, 4)) { this.removeCar(v); continue; }
+      // ёрзает в тупике (задний ход - вперёд - снова назад): за 12 с не приблизилась к цели хотя бы на 3 м -
+      // тоже убираем, если не видно (замер 17.11.2026: 2 погони из 10 доезжали за 25 и 43 с вместо 4-8)
+      const t = v.target ? this.room.players.get(v.target) : null;
+      if (!t) continue;
+      const d = Math.hypot(t.x - v.x, t.y - v.y);
+      if (!v.prog || d < v.prog.d - 3) v.prog = { d, t: now };
+      else if (now - v.prog.t > 12 && d > 20 && !this.seen(v.x, v.y, 4)) this.removeCar(v);
     }
   }
   removeCar(v) {
