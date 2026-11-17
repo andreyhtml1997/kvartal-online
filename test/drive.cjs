@@ -40,6 +40,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // к машине, сесть по F, газ, выйти
     await kv(() => window.__kv.send({ t: 'dbg', nearCar: 1, give: 1 }));
     await sleep(900);
+    // один клик мышью - ровно один выстрел (раньше короткое нажатие иногда давало два)
+    await kv(() => window.__kv.selectWeapon(1));
+    await pc.mouse.move(900, 260);
+    await sleep(500);
+    const am0 = await kv(() => window.__kv.S.me.ammo[1]);
+    for (let i = 0; i < 2; i++) { await pc.mouse.down(); await sleep(150); await pc.mouse.up(); await sleep(700); }
+    await sleep(300);
+    const am1 = await kv(() => window.__kv.S.me.ammo[1]);
+    check(am0 - am1 === 2, `два клика по 150 мс - два выстрела (потрачено патронов: ${am0 - am1})`);
+    await kv(() => window.__kv.send({ t: 'dbg', god: 1 }));
     const near = await kv(() => !!window.__kv.nearCar());
     check(near, 'рядом с машиной появилась возможность сесть');
     check(await pc.isVisible('#btnCar'), 'кнопка с машиной видна');
@@ -177,6 +187,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(300);
     const w1 = await ph.evaluate(() => window.__kv.S.me.cur);
     check(w1 !== w0, `кнопка справа меняет оружие (${w0} -> ${w1})`);
+    // короткое касание правой половины экрана - ровно один выстрел
+    await ph.evaluate(() => window.__kv.selectWeapon(1));
+    await sleep(500);
+    const pa0 = await ph.evaluate(() => window.__kv.S.me.ammo[1]);
+    const tapPt = await ph.evaluate(() => ({ x: innerWidth * 0.62, y: innerHeight * 0.25 }));
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tapPt.x, y: tapPt.y, id: 9 }] });
+    await sleep(140);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(1000);
+    const pa1 = await ph.evaluate(() => window.__kv.S.me.ammo[1]);
+    check(pa0 - pa1 === 1, `короткое касание - один выстрел (потрачено патронов: ${pa0 - pa1})`);
+    await ph.evaluate(() => window.__kv.send({ t: 'dbg', god: 1 }));
     // держим левый джойстик и касаемся оружия в полоске сверху - оружие меняется на ходу
     const slots = await ph.$$eval('#weaponBar .slot', els => els.map((e, i) => { const r = e.getBoundingClientRect(); return { i, hidden: e.hidden, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }).filter(s => !s.hidden));
     const curNow = await ph.evaluate(() => window.__kv.S.me.cur);

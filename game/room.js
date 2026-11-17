@@ -17,6 +17,7 @@ const MAX_HUMANS = 16;
 const MIN_PLAYERS = 4;          // боты добирают до этого числа
 const MAX_PICKUPS = 24;
 const PICKUP_LIFE = 120;        // с
+const PRESS_LATCH = 0.3;        // с: нажатие во время перезарядки стреляет, только если она кончится за это время
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
   '#fabed4', '#469990', '#dcbeff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#ffd8b1', '#a9a9a9', '#ffe119'];
 const BOT_NAMES = ['Шустрый', 'Бородач', 'Кепка', 'Гвоздь', 'Сова', 'Тихий', 'Мотор', 'Лапша', 'Пиксель', 'Сухарь'];
@@ -75,7 +76,7 @@ class Room {
     const p = {
       id: this.nextId++, name, isBot, ws: null, color: this.pickColor(),
       x: 0, y: 0, a: 0, hp: 0, ar: 0, alive: false, respawnAt: 0,
-      ammo: [0, -1, -1, -1, -1, -1], cur: 0, fire: false, fireLatch: false, nextShot: 0,
+      ammo: [0, -1, -1, -1, -1, -1], cur: 0, fire: false, fireLatch: false, latchAt: 0, nextShot: 0,
       kills: 0, deaths: 0, prot: 0, tp: 0, budget: 0, lastMoveTime: 0, shotAt: -10,
       view: [24, 16], ai: null, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprint: false, hornAt: -10
     };
@@ -251,8 +252,11 @@ class Room {
   onInput(p, m) {
     const a = Number(m.a);
     if (Number.isFinite(a)) p.a = a;
+    // f - атака зажата; q - новое нажатие: один выстрел, даже если кнопку уже отпустили.
+    // Раньше флаг нажатия заново ставило каждое сообщение с зажатой атакой, и после выстрела он
+    // взводился повторно - короткое нажатие давало второй выстрел через перезарядку.
     p.fire = !!m.f;
-    if (m.f) p.fireLatch = true;
+    if (m.q) { p.fireLatch = true; p.latchAt = this.time; }
     p.sprint = !!m.s && !p.vehicle;
     const d = Number(m.d);
     p.aimD = Number.isFinite(d) && d > 0 ? Math.min(100, d) : 0; // до какой точки целится (граната взрывается там)
@@ -319,6 +323,7 @@ class Room {
   }
 
   updateFiring(p) {
+    if (p.fireLatch && this.time - p.latchAt > PRESS_LATCH) p.fireLatch = false; // нажатие давнее - не стреляем с опозданием
     if (!p.alive || !(p.fire || p.fireLatch)) return;
     if (this.time < p.nextShot) return;
     // на рывке не стреляют

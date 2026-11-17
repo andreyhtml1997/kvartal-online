@@ -12,6 +12,7 @@
   const CHUNK = 16;
   const INTERP_MS = 110;
   const SEND_MS = 50;
+  const PRESS_MS = 300;       // нажатие во время перезарядки выстрелит, только если перезарядка кончится в эти мс
   const TP_MAX = 50;          // предел пикселей на метр (память под кэш карты)
   const STICK_R = 56;         // радиус левого джойстика (ходьба), css px
   const AIM_R = 78;           // радиус большого правого стика-прицела, css px
@@ -939,11 +940,14 @@
   // Ввод
   // ======================================================================
   const input = {
-    keys: new Set(), mx: 0, my: 0, mouseX: 0, mouseY: 0, mouseDown: false, fire: false, fireTap: false,
+    keys: new Set(), mx: 0, my: 0, mouseX: 0, mouseY: 0, mouseDown: false, fire: false, pressSend: false, pressFire: false, pressAt: 0,
     mode: isTouch ? 'touch' : 'mouse', move: null, aim: null, wheelAt: 0, sprintBtn: false
   };
 
   function typing() { const el = document.activeElement; return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'); }
+  // Новое нажатие атаки - ровно один выстрел, даже если кнопку отпустили раньше, чем ушло сообщение на сервер.
+  // Держишь дольше перезарядки - стреляет дальше: это зажатая атака, а не повтор нажатия.
+  function newPress() { input.pressSend = true; input.pressFire = true; input.pressAt = performance.now(); }
 
   window.addEventListener('keydown', e => {
     if (typing() || !S.inGame) return;
@@ -971,7 +975,7 @@
     if (S.gearOpen) showGear(false);
     input.mode = 'mouse';
     input.mouseDown = true;
-    input.fireTap = true;
+    newPress();
   });
   window.addEventListener('mouseup', e => { if (e.button === 0) input.mouseDown = false; });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1003,7 +1007,7 @@
         const [bx, by] = aimBase();
         const inStick = Math.hypot(t.clientX - bx, t.clientY - by) <= AIM_R * 1.35;
         input.aim = { id: t.identifier, mode: inStick ? 'stick' : 'point', x: t.clientX, y: t.clientY, t0: performance.now() };
-        input.fireTap = true;
+        newPress();
       }
     }
   }, { passive: false });
@@ -1945,15 +1949,19 @@
   // ======================================================================
   // Кадр
   // ======================================================================
+  // Выстрел в браузере сразу (звук, вспышка) - по тем же правилам, что на сервере (room.updateFiring)
   function predictFire(now) {
-    if (!S.me.alive || !(input.fire || input.fireTap) || S.me.sprinting) return;
+    if (input.pressFire && now - input.pressAt > PRESS_MS) input.pressFire = false; // давнее нажатие не стреляет с опозданием
+    if (!S.me.alive || !(input.fire || input.pressFire)) return;
+    if (S.me.sprinting) { input.pressFire = false; return; }
     const w = WEAPONS[S.me.cur];
     if (now < S.me.nextShot) return;
-    if (w.melee && S.me.vehicle) return;
-    if (w.id !== W.FISTS && !(S.me.ammo[w.id] > 0)) {
-      if (now > S.emptyAt) { Sound.empty(); S.emptyAt = now + 350; }
+    if ((w.melee && S.me.vehicle) || (w.id !== W.FISTS && !(S.me.ammo[w.id] > 0))) {
+      input.pressFire = false;
+      if (!w.melee && now > S.emptyAt) { Sound.empty(); S.emptyAt = now + 350; }
       return;
     }
+    input.pressFire = false;
     S.me.nextShot = now + 1000 / w.rate;
     if (w.id === W.FISTS) { S.me.punch = 1; Sound.punch(); return; }
     S.me.ammo[w.id]--;
@@ -1967,9 +1975,12 @@
   function sendInput(now) {
     if (!S.inGame || !S.ws || S.ws.readyState !== 1 || now - S.lastSend < SEND_MS) return;
     S.lastSend = now;
-    const fire = (input.fire || input.fireTap) && !S.me.sprinting;
-    input.fireTap = false;
+    // f - атака зажата сейчас; q - было новое нажатие с прошлого сообщения (один выстрел, даже если уже отпустили)
+    const fire = input.fire && !S.me.sprinting;
+    const press = input.pressSend && !S.me.sprinting;
+    input.pressSend = false;
     const msg = { t: 'i', a: r3(S.me.a), f: fire ? 1 : 0, s: S.me.sprinting ? 1 : 0, v: [Math.round(S.view.hw), Math.round(S.view.hh)] };
+    if (press) msg.q = 1;
     // до какой точки целимся: граната взрывается там, где прицел
     if (S.aimPt) msg.d = r2(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y));
     if (S.me.vehicle && S.car) {
