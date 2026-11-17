@@ -62,10 +62,23 @@ function stand(kind, sec) {
 }
 function leaveShop() { room.teleport(me, me.x + 8, me.y + 8); room.updateShops(); }
 me.money = 250; ws.shop.length = 0;
+const ammo0 = me.ammo.slice();
 stand('gun', 3.5);
 const bought = ws.shop.find(x => x.k === 'gun' && x.ok);
 console.log(`оружейный: куплено ${bought ? WEAPONS[bought.w].name : '-'} (патронов ${bought ? me.ammo[bought.w] : '-'}), осталось $${me.money}`);
-assert.ok(bought && me.money === 150 && (WEAPONS[bought.w].noAmmo ? me.ammo[bought.w] === 0 : me.ammo[bought.w] === WEAPONS[bought.w].max), 'оружейный: оружие с полным запасом за $100, второй раз - только сойдя с круга');
+// полный запас; миниган - +1000 к тому, что было (запас до 10 000)
+const expect = w => (WEAPONS[w].noAmmo ? 0 : WEAPONS[w].shop ? Math.min(WEAPONS[w].max, Math.max(0, ammo0[w]) + WEAPONS[w].shop) : WEAPONS[w].max);
+assert.ok(bought && me.money === 150 && me.ammo[bought.w] === expect(bought.w), 'оружейный: оружие с полным запасом (миниган +1000) за $100, второй раз - только сойдя с круга');
+// миниган из магазина - +1000 к имеющимся
+me.ammo[W.MINIGUN] = 2500;
+const rw = room.randomWeapon;
+room.randomWeapon = () => W.MINIGUN;
+me.money = 100; ws.shop.length = 0;
+leaveShop(); stand('gun', 2);
+room.randomWeapon = rw;
+console.log(`оружейный, миниган при 2500 патронах: стало ${me.ammo[W.MINIGUN]}`);
+assert.strictEqual(me.ammo[W.MINIGUN], 3500, 'миниган из магазина - +1000 к имеющимся');
+me.money = 150; // дальше - как было после первой покупки
 leaveShop();
 
 // 4. больница: здоровье до 100 за $50; без денег - не лечит

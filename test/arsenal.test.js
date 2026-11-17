@@ -36,7 +36,13 @@ me.fire = false;
 const mini = shots.length - early;
 console.log(`миниган: за первые 0.2 с ${early} пуль, за следующую секунду ${mini}; поднял - ${WEAPONS[W.MINIGUN].pick} патронов из ${WEAPONS[W.MINIGUN].max}`);
 assert.ok(early === 0 && mini >= 21 && mini <= 26, 'миниган раскручивается за четверть секунды и строчит ~24 пули в секунду');
-assert.ok(WEAPONS[W.MINIGUN].pick === 1000 && WEAPONS[W.MINIGUN].max === 1000, 'поднятый миниган - сразу 1000 патронов');
+assert.ok(WEAPONS[W.MINIGUN].pick === 1000 && WEAPONS[W.MINIGUN].max === 10000, 'поднятый миниган - +1000 патронов, запас до 10 000');
+// подбор миниганов копит патроны до 10 000
+me.ammo[W.MINIGUN] = -1;
+let picks = 0;
+while (picks < 12) { const pk = R.addPickup(KV.PK.WEAPON, W.MINIGUN, me.x, me.y, WEAPONS[W.MINIGUN].pick); if (!R.tryPick(me, pk)) { R.removePickup(pk.id); break; } R.removePickup(pk.id); picks++; }
+console.log(`подобрал миниганов: ${picks}, патронов ${me.ammo[W.MINIGUN]}`);
+assert.ok(picks === 10 && me.ammo[W.MINIGUN] === 10000, 'десять миниганов - 10 000 патронов, одиннадцатый уже не берётся');
 
 // 2. автодробовик: 3 веера по 7 дробин в секунду; узи - 14 пуль в секунду
 arm(W.AUTOSHOT); me.fire = true; tick(1.0); me.fire = false;

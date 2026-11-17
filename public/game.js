@@ -2601,7 +2601,9 @@
     if (force || sig !== hudSig) {
       hudSig = sig;
       // у щита на значке - патроны пистолета (атака со щитом - из него)
-      const cnt = i => (i === W.FISTS ? '∞' : WEAPONS[i].noAmmo ? (me.ammo[W.PISTOL] > 0 ? String(me.ammo[W.PISTOL]) : '—') : String(Math.max(0, me.ammo[i])));
+      // 10 000 патронов минигана - «10к», чтобы ячейка не раздувалась
+      const num = n => (n >= 10000 ? Math.floor(n / 1000) + 'к' : String(n));
+      const cnt = i => (i === W.FISTS ? '∞' : WEAPONS[i].noAmmo ? (me.ammo[W.PISTOL] > 0 ? num(me.ammo[W.PISTOL]) : '—') : num(Math.max(0, me.ammo[i])));
       let pos = 0;
       slotEls.forEach((el, i) => {
         const owned = i === W.FISTS || me.ammo[i] >= 0;

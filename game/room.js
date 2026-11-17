@@ -1244,7 +1244,10 @@ class Room {
       p.hp = KV.MAX_HP;
     } else if (s.kind === 'gun') {
       w = this.randomWeapon();
-      if (WEAPONS[w].noAmmo) p.ammo[w] = Math.max(0, p.ammo[w]); else p.ammo[w] = WEAPONS[w].max;
+      const ww = WEAPONS[w];
+      // полный запас; миниган - +1000 к тому, что есть (запас до 10 000)
+      if (ww.noAmmo) p.ammo[w] = Math.max(0, p.ammo[w]);
+      else p.ammo[w] = ww.shop ? Math.min(ww.max, Math.max(0, p.ammo[w]) + ww.shop) : ww.max;
       p.cur = w; p.spinT = 0;
     } else {
       // автомастерская: новый цвет, полный ремонт (и пожар потушен), все звёзды розыска сняты - погоня уезжает
