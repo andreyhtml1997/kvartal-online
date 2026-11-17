@@ -44,7 +44,7 @@
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
-    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0
+    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0
   };
 
   function makePlayer(id) {
@@ -133,6 +133,7 @@
         }
       }
       if (ac.state === 'suspended') ac.resume().catch(() => {});
+      load();
     }
     function vol(x, y) {
       if (x === undefined) return 1;
@@ -177,6 +178,77 @@
       osc.start(t);
       osc.stop(t + o.dur + 0.05);
     }
+    // ---------- записанные звуки (CC0, public/sounds): грузятся после входа в игру, пока не загрузились - играет синтез ----------
+    const FILES = ['pain1', 'pain2', 'pain3', 'pain4', 'pain5', 'pain6', 'pain7', 'pain8', 'pain9', 'death1', 'death2', 'death3',
+      'horn', 'pistol', 'rifle', 'shotgun', 'sniper', 'launcher', 'explosion', 'glass', 'metal', 'flamer', 'saw_idle', 'saw_cut',
+      'tires', 'crash', 'ambulance', 'engine.wav', 'siren.wav'];
+    const buf = {};
+    let loadStarted = false;
+    function load() {
+      if (!ac || loadStarted) return;
+      loadStarted = true;
+      for (const f of FILES) {
+        const name = f.replace(/\.wav$/, ''), file = f.includes('.') ? f : f + '.mp3';
+        fetch('sounds/' + file).then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(file))))
+          .then(a => new Promise((res, rej) => ac.decodeAudioData(a, res, rej)))
+          .then(b => { buf[name] = b; }).catch(() => {});
+      }
+    }
+    const PAIN = ['pain1', 'pain2', 'pain3', 'pain4', 'pain5', 'pain6', 'pain7', 'pain8', 'pain9'];
+    const DEATH = ['death1', 'death2', 'death3'];
+    const SHOT = [null, 'pistol', 'rifle', 'shotgun', 'sniper', 'launcher'];
+    const pick = a => a[Math.floor(Math.random() * a.length)];
+    // короткий звук из файла; false - файл ещё не загружен (тогда звучит синтез)
+    function sample(name, o) {
+      const b = buf[name];
+      if (!ac || !b) return false;
+      if (!on) return true;
+      const v = (o.gain === undefined ? 1 : o.gain) * vol(o.x, o.y);
+      if (v < 0.01) return true;
+      const src = ac.createBufferSource();
+      src.buffer = b;
+      src.playbackRate.value = o.rate || 0.94 + Math.random() * 0.12;
+      const g = ac.createGain();
+      g.gain.value = v;
+      src.connect(g); g.connect(master);
+      src.start(ac.currentTime + (o.delay || 0));
+      return true;
+    }
+    // зацикленные звуки (моторы, огнемёт, пила, сирены): каждый кадр передаётся список нужных, лишние плавно стихают
+    const loopsOn = new Map();
+    let engList = [];
+    function loops(list) {
+      if (!ac) return;
+      const t = ac.currentTime, seen = new Set();
+      for (const o of list.concat(engList)) {
+        const b = buf[o.name];
+        if (!b) continue;
+        const key = o.key + ':' + o.name;
+        seen.add(key);
+        let l = loopsOn.get(key);
+        if (l && l.dying) { loopsOn.delete(key); l = null; }
+        if (!l) {
+          const src = ac.createBufferSource();
+          src.buffer = b; src.loop = true;
+          if (b.duration > 0.4 && o.name !== 'engine' && o.name !== 'siren') { src.loopStart = 0.05; src.loopEnd = b.duration - 0.03; }
+          const g = ac.createGain();
+          g.gain.value = 0;
+          src.connect(g); g.connect(master);
+          src.start(t, Math.random() * b.duration * 0.8);
+          l = { src, g, dying: false };
+          loopsOn.set(key, l);
+        }
+        l.g.gain.setTargetAtTime(on ? (o.gain || 1) * vol(o.x, o.y) : 0, t, 0.06);
+        if (o.rate) l.src.playbackRate.setTargetAtTime(o.rate, t, 0.08);
+      }
+      for (const [key, l] of loopsOn) {
+        if (seen.has(key) || l.dying) continue;
+        l.dying = true;
+        l.g.gain.setTargetAtTime(0, t, 0.08);
+        try { l.src.stop(t + 0.5); } catch (_) {}
+        setTimeout(() => { if (loopsOn.get(key) === l) loopsOn.delete(key); }, 650);
+      }
+    }
     let stepAlt = 0, tripOut = null;
     return {
       init,
@@ -187,25 +259,31 @@
         if (master) master.gain.value = on ? 0.55 : 0;
         return on;
       },
+      loops,
+      loadedCount() { return Object.keys(buf).length; },
       shot(w, x, y) {
+        if (SHOT[w] && sample(SHOT[w], { x, y, gain: w === W.RIFLE ? 0.5 : w === W.PISTOL ? 0.65 : 0.8 })) return;
         if (w === W.PISTOL) { burst({ dur: 0.12, freq: 1800, q: 0.8, gain: 0.45, x, y, sweep: 600 }); tone({ freq: 170, dur: 0.06, gain: 0.2, type: 'triangle', slide: 60, x, y }); }
         else if (w === W.RIFLE) burst({ dur: 0.08, freq: 2200, q: 0.9, gain: 0.35, x, y, sweep: 700 });
         else if (w === W.SHOTGUN) { burst({ dur: 0.3, freq: 1100, q: 0.6, gain: 0.75, x, y, sweep: 180, type: 'lowpass' }); tone({ freq: 120, dur: 0.12, gain: 0.35, slide: 40, x, y }); }
         else if (w === W.SNIPER) { burst({ dur: 0.38, freq: 2600, q: 0.7, gain: 0.7, x, y, sweep: 300 }); tone({ freq: 90, dur: 0.2, gain: 0.35, slide: 40, x, y }); }
         else if (w === W.LAUNCHER) burst({ dur: 0.25, freq: 600, q: 0.7, gain: 0.5, x, y, type: 'lowpass', sweep: 150 });
       },
-      boom(x, y) { burst({ dur: 1.1, freq: 900, q: 0.5, gain: 1, type: 'lowpass', sweep: 60, x, y, attack: 0.005 }); tone({ freq: 70, dur: 0.6, gain: 0.6, slide: 30, x, y }); },
-      glass(x, y) { burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
+      boom(x, y) { if (sample('explosion', { x, y, gain: 1, rate: 0.85 + Math.random() * 0.25 })) return; burst({ dur: 1.1, freq: 900, q: 0.5, gain: 1, type: 'lowpass', sweep: 60, x, y, attack: 0.005 }); tone({ freq: 70, dur: 0.6, gain: 0.6, slide: 30, x, y }); },
+      glass(x, y) { if (sample('glass', { x, y, gain: 0.6 })) return; burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
       wood(x, y) { burst({ dur: 0.18, freq: 700, q: 1.5, gain: 0.35, x, y }); },
       brick(x, y) { burst({ dur: 0.45, freq: 420, q: 0.6, gain: 0.45, type: 'lowpass', x, y, sweep: 120 }); },
       hit() { tone({ freq: 1400, dur: 0.05, gain: 0.15, type: 'square' }); },
-      hurt() { tone({ freq: 220, dur: 0.15, gain: 0.22, type: 'sawtooth', slide: 110 }); },
+      hurt() { if (sample(pick(PAIN), { gain: 0.85 })) return; tone({ freq: 220, dur: 0.15, gain: 0.22, type: 'sawtooth', slide: 110 }); },
       pickup() { tone({ freq: 660, dur: 0.08, gain: 0.18, type: 'triangle' }); tone({ freq: 990, dur: 0.12, gain: 0.18, type: 'triangle', delay: 0.07 }); },
       empty() { tone({ freq: 1200, dur: 0.03, gain: 0.1, type: 'square' }); },
       punch(x, y) { burst({ dur: 0.08, freq: 300, q: 1, gain: 0.3, type: 'lowpass', x, y }); },
       click() { tone({ freq: 800, dur: 0.03, gain: 0.07, type: 'square' }); },
-      death() { tone({ freq: 300, dur: 0.6, gain: 0.22, type: 'sawtooth', slide: 60 }); },
-      metal(x, y) { burst({ dur: 0.06, freq: 3000, q: 5, gain: 0.18, x, y }); },
+      pain(x, y) { sample(pick(PAIN), { x, y, gain: 0.7 }); },
+      deathAt(x, y) { sample(pick(DEATH), { x, y, gain: 0.8 }); },
+      tires() { sample('tires', { gain: 0.4 }); },
+      death() { if (sample(pick(DEATH), { gain: 0.9 })) return; tone({ freq: 300, dur: 0.6, gain: 0.22, type: 'sawtooth', slide: 60 }); },
+      metal(x, y) { if (sample('metal', { x, y, gain: 0.35 })) return; burst({ dur: 0.06, freq: 3000, q: 5, gain: 0.18, x, y }); },
       // шаги: звук зависит от того, по чему идём
       step(ground, x, y, mul = 1) {
         stepAlt = 1 - stepAlt;
@@ -216,13 +294,14 @@
         else if (ground === G.RUBBLE || ground === G.BURNT) burst({ dur: 0.09, freq: 1900 * p, q: 0.8, gain: 0.09 * mul, type: 'highpass', x, y });
         else burst({ dur: 0.05, freq: 950 * p, q: 1.3, gain: 0.13 * mul, x, y });
       },
-      horn(x, y) { tone({ freq: 410, dur: 0.38, gain: 0.16, type: 'square', x, y }); tone({ freq: 518, dur: 0.38, gain: 0.12, type: 'square', x, y }); },
-      crash(x, y, s) { const g = Math.min(1, 0.3 + s / 20); burst({ dur: 0.35, freq: 700, q: 0.6, gain: 0.6 * g, type: 'lowpass', x, y, sweep: 150 }); burst({ dur: 0.12, freq: 2600, q: 6, gain: 0.25 * g, x, y }); },
+      horn(x, y) { if (sample('horn', { x, y, gain: 0.7, rate: 1 })) return; tone({ freq: 410, dur: 0.38, gain: 0.16, type: 'square', x, y }); tone({ freq: 518, dur: 0.38, gain: 0.12, type: 'square', x, y }); },
+      crash(x, y, s) { if (sample('crash', { x, y, gain: Math.min(1, 0.3 + s / 14) })) return; const g = Math.min(1, 0.3 + s / 20); burst({ dur: 0.35, freq: 700, q: 0.6, gain: 0.6 * g, type: 'lowpass', x, y, sweep: 150 }); burst({ dur: 0.12, freq: 2600, q: 6, gain: 0.25 * g, x, y }); },
       thud(x, y) { tone({ freq: 85, dur: 0.18, gain: 0.45, x, y, slide: 50 }); burst({ dur: 0.12, freq: 400, q: 0.8, gain: 0.35, type: 'lowpass', x, y }); },
       fire(x, y) { burst({ dur: 0.6, freq: 300, q: 0.6, gain: 0.4, type: 'lowpass', sweep: 1600, x, y, attack: 0.1 }); },
       doorOpen() { burst({ dur: 0.12, freq: 900, q: 3, gain: 0.15 }); },
-      flame(x, y) { burst({ dur: 0.22, freq: 420, q: 0.5, gain: 0.3, type: 'lowpass', sweep: 1500, x, y, attack: 0.03 }); },
+      flame(x, y) { if (buf.flamer) return; burst({ dur: 0.22, freq: 420, q: 0.5, gain: 0.3, type: 'lowpass', sweep: 1500, x, y, attack: 0.03 }); },
       saw(x, y, cut) {
+        if (buf.saw_cut) return;
         tone({ freq: cut ? 210 : 160, dur: 0.13, gain: 0.13, type: 'sawtooth', slide: cut ? 260 : 175, x, y });
         if (cut) burst({ dur: 0.1, freq: 2600, q: 1.4, gain: 0.16, x, y });
       },
@@ -274,6 +353,12 @@
       engines(list) {
         if (!ac) return;
         const t = ac.currentTime;
+        // записанный мотор: высота звука растёт со скоростью
+        if (buf.engine) {
+          for (const e of engines) e.g.gain.setTargetAtTime(0, t, 0.08);
+          engList = list.map((o, i) => (o ? { key: 'eng' + i, name: 'engine', gain: Math.min(0.6, o.gain * 4), rate: Math.max(0.55, o.freq / 70) } : null)).filter(Boolean);
+          return;
+        }
         for (let i = 0; i < engines.length; i++) {
           const e = engines[i], o = list[i];
           if (!o || !on) { e.g.gain.setTargetAtTime(0, t, 0.08); continue; }
@@ -1479,7 +1564,7 @@
       const dx = Math.cos(ang), dy = Math.sin(ang);
       S.bullets.set(id, { x0: x, y0: y, dx, dy, speed: wp.speed, range: wp.range, w, t0: now, end: null, endKind: 0, ex: 0, ey: 0 });
       if (owner !== S.myId) {
-        if (w === W.FLAMER) { if (now - S.flameSndOther > 130) { S.flameSndOther = now; Sound.flame(x, y); } }
+        if (w === W.FLAMER) { S.flameHeard = { at: now, x, y }; if (now - S.flameSndOther > 130) { S.flameSndOther = now; Sound.flame(x, y); } }
         else { Sound.shot(w, x, y); spawn('flash', x + dx * 0.9, y + dy * 0.9, 1, '#ffcf70', 0.2, 0.06, 0.28); }
       }
     }
@@ -1490,7 +1575,12 @@
     }
     if (m.hu) for (const [id, x, y, att] of m.hu) {
       if (id === S.myId) { S.hurtFlash = 1; Sound.hurt(); if (!a11y('motion')) S.shake = Math.max(S.shake, 0.25); }
-      else if (att === S.myId) { S.hitMarks.push({ x, y, t0: now }); Sound.hit(); }
+      else {
+        // попали по кому-то: стон (не чаще раза в 0.3 с на человека), своё попадание - метка и щелчок
+        const hp = S.players.get(id);
+        if (hp && now - (hp.painAt || 0) > 300) { hp.painAt = now; Sound.pain(x, y); }
+        if (att === S.myId) { S.hitMarks.push({ x, y, t0: now }); Sound.hit(); }
+      }
       spawn('blood', x, y, 3, '#9b0f0f', 2.5, 0.4, 0.1);
     }
     if (m.x) for (const [x, y, r] of m.x) explosionEffect(x, y, r);
@@ -1576,8 +1666,9 @@
       $('deathBy').textContent = self ? (w === -2 ? 'Вас сбила машина' : 'Вы погибли') : `Вас убил ${nameOf(killer)}`;
       $('deathScreen').hidden = false;
       Sound.death();
-    } else if (killer === S.myId) {
-      toast(`Вы убили: ${nameOf(victim)}`);
+    } else {
+      Sound.deathAt(vx, vy);
+      if (killer === S.myId) toast(`Вы убили: ${nameOf(victim)}`);
     }
   }
 
@@ -2127,6 +2218,8 @@
       [thr, steer] = KV.steerToward(car, input.mx, input.my);
     }
     car.thr = thr;
+    // визг шин: занос или резкий поворот на скорости
+    if ((Math.hypot(car.sx, car.sy) > 3.5 || (Math.abs(steer) > 0.9 && Math.abs(car.v) > 13)) && now - S.tiresAt > 1400) { S.tiresAt = now; Sound.tires(); }
     for (const [kk, t] of S.rammed) if (now - t > 2000) S.rammed.delete(kk);
     const res = KV.stepVehicle(S.map, car, thr, steer, dt, new Set(S.rammed.keys()));
     for (const kk of res.rammed) {
@@ -2244,12 +2337,34 @@
     if (!S.me.alive && S.me.respawnIn > 0) S.me.respawnIn = Math.max(0, S.me.respawnIn - dt);
     render(now, dt);
     updateEngines();
+    updateLoops(now);
     if (now >= S.mmNext) {
       S.mmNext = now + 66;
       drawRadar(now);
       if (S.bigOpen) drawBigMap(now);
     }
     if (now >= S.hudNext) { S.hudNext = now + 100; updateHud(false); }
+  }
+
+  // зацикленные звуки: огнемёт и пила - свои и ближайшего соседа
+  function updateLoops(now) {
+    const want = [];
+    if (S.me.alive && now - S.flameSndAt < 160) want.push({ key: 'me', name: 'flamer', gain: 0.55 });
+    else if (S.flameHeard && now - S.flameHeard.at < 200) want.push({ key: 'o', name: 'flamer', gain: 0.5, x: S.flameHeard.x, y: S.flameHeard.y });
+    if (S.me.alive && !S.me.vehicle && S.me.cur === W.SAW) {
+      const busy = S.me.saw > 0;
+      const fx = S.me.x + Math.cos(S.me.a) * 1.25, fy = S.me.y + Math.sin(S.me.a) * 1.25;
+      const cut = busy && blockAt(Math.floor(fx), Math.floor(fy)) !== B.NONE;
+      want.push({ key: 'me', name: cut ? 'saw_cut' : 'saw_idle', gain: busy ? 0.5 : 0.16, rate: busy && !cut ? 1.25 : 1 });
+    }
+    let sawNear = null, sd = 30;
+    for (const p of S.players.values()) {
+      if (p.id === S.myId || p.hidden || p.w !== W.SAW || !(p.flags & 1) || (p.flags & 8)) continue;
+      const d = Math.hypot(p.rx - S.me.x, p.ry - S.me.y);
+      if (d < sd) { sd = d; sawNear = p; }
+    }
+    if (sawNear) want.push({ key: 'o', name: sawNear.saw > 0 ? 'saw_cut' : 'saw_idle', gain: sawNear.saw > 0 ? 0.5 : 0.18, x: sawNear.rx, y: sawNear.ry });
+    Sound.loops(want);
   }
 
   function updateEngines() {
@@ -2649,7 +2764,7 @@
   }
 
   // для автотестов
-  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar };
+  window.__kv = { S, input, WEAPONS, selectWeapon, send, carAction, nearCar, Sound };
 
   resize();
   requestAnimationFrame(frame);

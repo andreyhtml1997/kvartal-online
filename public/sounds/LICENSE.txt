@@ -1,0 +1,26 @@
+Звуки игры «Квартал». Все исходники - CC0 (общественное достояние, указывать автора не обязательно).
+Файлы обрезаны, сведены в моно и выровнены по громкости.
+
+pain1-6      opengameart.org, EZduzziteh, hurt_01..06.mp3
+pain7        freesound.org/s/547209  MrFossy, Voice_AdultMale_PainGrunts_09
+pain8        freesound.org/s/464486  elynch0901, Male Grunting In Pain
+pain9        freesound.org/s/413186  micahlg, male_hurt9
+death1       freesound.org/s/396801  scorpion67890, Male Death 4
+death2       freesound.org/s/554443  Blankened, Male Death Sound
+death3       freesound.org/s/243382  JohnsonBrandEditing, human male scream 5
+horn         freesound.org/s/66585   zerolagtime, Honda Civic double beep
+pistol       freesound.org/s/803497  mahecic, Pocket Pistol gunshot 2
+rifle        freesound.org/s/160590  Keatonmcq, Assault Rifle (Single Burst)
+shotgun      freesound.org/s/405504  LilMati, Shotgun Shot 01
+sniper       freesound.org/s/855607  qubodup, Sniper Shot in Field 2
+launcher     freesound.org/s/163458  LeMudCrab, Grenade Launcher
+explosion    freesound.org/s/609587  unfa, Grenade Explosion SFX
+glass        freesound.org/s/861044  ElevatorFan2020, Hard Glass Break 3
+metal        freesound.org/s/351371  wilhellboy, HeavyBulletPing
+flamer       freesound.org/s/867029  raphavpires, Flamethrower (loop)
+saw_idle, saw_cut  freesound.org/s/402752  Philadelphus, chainsaw_revving
+engine       opengameart.org, domasx2, loop_0.wav
+tires        freesound.org/s/104026  RutgerMuller, Tires Squeaking
+crash        freesound.org/s/237375  squareal, Car Crash
+siren        freesound.org/s/268221  szpury, police siren one loop
+ambulance    freesound.org/s/469412  sofialomba, Ambulance siren
