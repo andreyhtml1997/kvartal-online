@@ -368,6 +368,8 @@ class Vehicles {
 
   damage(v, amount, attackerId) {
     if (v.dead || !(amount > 0)) return;
+    // банда: машину, в которой сидит свой, не портим (иначе её взрыв убил бы его)
+    if (this.room.gang && attackerId > 0 && v.driver && v.driver !== attackerId && this.room.allies(this.room.players.get(v.driver), this.room.players.get(attackerId))) return;
     if (attackerId) v.lastAttacker = attackerId;
     // по машинам стрелять нельзя: звёзды розыска (кроме машин игроков и ботов - это перестрелка)
     const att = attackerId > 0 ? this.room.players.get(attackerId) : null;

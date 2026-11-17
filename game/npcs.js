@@ -336,8 +336,9 @@ class Npcs {
   }
   fightStep(n, dt) {
     const room = this.room, now = room.time;
-    const t = this.targetOf(n.target);
     const law = LAW.has(n.kind);
+    let t = this.targetOf(n.target);
+    if (law && room.gang && n.target > 0) { t = this.retarget(t, n.x, n.y); if (t) n.target = t.id; }
     const wanted = !law || (t && t.stars > 0);
     if (!t || !t.alive || !wanted || now > n.until) { if (law) this.leave(n); else this.calm(n); return; }
     const tx = t.x, ty = t.y, d = Math.hypot(tx - n.x, ty - n.y);
@@ -683,7 +684,8 @@ class Npcs {
     if (!drv || !drv.alive) { this.ejectCrew(v, 0); return [0, 0]; }
     if (!room.bots.driveMask || now - room.bots.driveMaskAt > 10) room.bots.buildDriveMask();
     let gx = null, gy = null, direct = false, limit = 99;
-    const t = v.target ? room.players.get(v.target) : null;
+    let t = v.target ? room.players.get(v.target) : null;
+    if (room.gang && (v.role === 'police' || v.role === 'tank') && v.target > 0) { t = this.retarget(t, v.x, v.y); if (t) v.target = t.id; }
     const tv = t && t.vehicle ? room.vehicles.list.get(t.vehicle) : null;
     const txp = tv ? tv.x : t ? t.x : 0, typ = tv ? tv.y : t ? t.y : 0;
     const dT = t ? Math.hypot(txp - v.x, typ - v.y) : 1e9;
@@ -792,20 +794,71 @@ class Npcs {
       p.crimeAt.set(key, now);
       if (p.crimeAt.size > 200) p.crimeAt.clear();
     }
+    if (this.room.gang) {
+      // банда: розыск один на всех - натворил один, ищут всех
+      this.gangHeat = (this.gangHeat || 0) + heat;
+      let gs = 0;
+      while (gs < 5 && this.gangHeat >= STAR_HEAT[gs + 1]) gs++;
+      this.setGang(Math.max(gs, this.gangStars || 0), this.gangHeat);
+      return;
+    }
     p.heat = (p.heat || 0) + heat;
     let s = 0;
     while (s < 5 && p.heat >= STAR_HEAT[s + 1]) s++;
     if (s > (p.stars || 0)) { p.stars = s; this.room.ev.ws.push([p.id, s]); }
   }
-  // подобрал звезду погашения: минус одна звезда
+  // подобрал звезду погашения: минус одна звезда (в банде - у всех)
   starPicked(p) {
+    if (this.room.gang && !p.isBot) { const s = Math.max(0, (this.gangStars || 0) - 1); this.setGang(s, s ? STAR_HEAT[s] : 0); return; }
     p.stars = Math.max(0, (p.stars || 0) - 1);
     p.heat = p.stars ? STAR_HEAT[p.stars] : 0;
     this.room.ev.ws.push([p.id, p.stars]);
   }
+  // смерть гасит розыск; в банде - только когда погибли все (решение владельца 17.11.2026)
   playerDied(p) {
+    if (this.room.gang && !p.isBot) {
+      if (![...this.room.players.values()].some(q => q !== p && !q.isBot && q.alive)) this.setGang(0, 0);
+      return;
+    }
     if (p.stars) this.room.ev.ws.push([p.id, 0]);
     p.stars = 0; p.heat = 0;
+  }
+  // автомастерская: все звёзды долой (в банде - со всех)
+  clearStars(p) {
+    if (this.room.gang && !p.isBot) { this.setGang(0, 0); return; }
+    if (p.stars) this.room.ev.ws.push([p.id, 0]);
+    p.stars = 0; p.heat = 0;
+  }
+  // общий розыск банды: одни звёзды и «жар» у всех людей в комнате
+  setGang(stars, heat) {
+    const changed = stars !== (this.gangStars || 0);
+    this.gangStars = stars; this.gangHeat = heat;
+    for (const q of this.room.players.values()) {
+      if (q.isBot) continue;
+      q.heat = heat;
+      if (q.stars !== stars) { q.stars = stars; this.room.ev.ws.push([q.id, stars]); }
+    }
+    return changed;
+  }
+  // вошёл в банду посреди погони - сразу в розыске вместе со всеми
+  gangJoin(p) {
+    p.heat = this.gangHeat || 0; p.stars = this.gangStars || 0;
+    if (p.stars) this.room.ev.ws.push([p.id, p.stars]);
+  }
+  // кого из банды ловить: ближайшего живого (погоня делится - каждая машина к своему)
+  gangTarget(x, y) {
+    let best = null, bd = 1e9;
+    for (const q of this.room.players.values()) {
+      if (q.isBot || !q.alive || !(q.stars > 0)) continue;
+      const d = Math.hypot(q.x - x, q.y - y);
+      if (d < bd) { bd = d; best = q; }
+    }
+    return best;
+  }
+  // цель погибла, а банда ещё в розыске - переключаемся на ближайшего живого из неё
+  retarget(t, x, y) {
+    if (!this.room.gang || (t && t.alive) || (t && t.isBot)) return t;
+    return this.gangTarget(x, y) || t;
   }
   // клетка дороги в нужном кольце расстояний, которую не видит ни один игрок
   roadSpawn(x, y, rmin, rmax) {
@@ -851,10 +904,12 @@ class Npcs {
     const onFoot = new Map();
     for (const n of this.list.values()) if (n.alive && n.kind === K.COP && n.state === 'fight') onFoot.set(n.target, (onFoot.get(n.target) || 0) + 1);
     for (const [id, c] of onFoot) { const u = Math.ceil(c / 2); per.set(id, (per.get(id) || 0) + u); total += u; }
-    for (const p of room.players.values()) {
-      if (p.isBot || !p.alive || !(p.stars > 0)) continue;
+    // банда - одна цель: машины, что ловят любого из неё, считаются вместе (лимиты как на одного игрока)
+    const groupOf = id => (room.gang && id > 0 && room.players.has(id) && !room.players.get(id).isBot ? 'gang' : id);
+    if (room.gang) for (const [id, c] of [...per]) if (groupOf(id) === 'gang') { per.delete(id); per.set('gang', (per.get('gang') || 0) + c); }
+    for (const p of this.wantedHeads()) {
       const want = Math.min(5, p.stars);
-      if ((per.get(p.id) || 0) >= want || total >= POLICE_CAP) continue;
+      if ((per.get(groupOf(p.id)) || 0) >= want || total >= POLICE_CAP) continue;
       const sp = this.roadSpawn(p.x, p.y, 30, 55);
       if (!sp) continue;
       const v = room.vehicles.create(sp.x, sp.y, sp.a, 6, 'npc', null);
@@ -863,26 +918,38 @@ class Npcs {
       v.crew = [this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun, hp: 100 }).id,
         this.create(K.COP, v.x, v.y, { state: 'incar', veh: v.id, w: gun === W.PISTOL ? W.PISTOL : W.SHOTGUN, hp: 100 }).id];
       total++;
-      per.set(p.id, (per.get(p.id) || 0) + 1);
+      per.set(groupOf(p.id), (per.get(groupOf(p.id)) || 0) + 1);
     }
-    // тяжёлая техника по звёздам: 3 - грузовик спецназа, 4 - вертолёт, 5 - танки
-    for (const p of room.players.values()) {
-      if (p.isBot || !p.alive) continue;
+    // тяжёлая техника по звёздам: 3 - грузовик спецназа, 4 - вертолёт, 5 - танки (в банде - столько же, сколько на одного)
+    for (const p of this.wantedHeads()) {
       const s = p.stars || 0;
+      const mine = room.gang ? h => h.state === 'fly' && groupOf(h.target) === 'gang' : h => h.target === p.id && h.state === 'fly';
       if (s >= 3 && !this.unitFor(p.id, 'swat')) this.spawnUnit(p, 'swat');
-      if (s >= 4 && this.helis.size < HELI_CAP && ![...this.helis.values()].some(h => h.target === p.id && h.state === 'fly')) this.spawnHeli(p);
+      if (s >= 4 && this.helis.size < HELI_CAP && ![...this.helis.values()].some(mine)) this.spawnHeli(p);
       if (s >= 5 && this.unitFor(p.id, 'tank') < 2 && this.unitFor(0, 'tank') < TANK_CAP) this.spawnUnit(p, 'tank');
     }
+  }
+  // за кем высылать погоню: в одиночке - каждый, кто в розыске; в банде - один из живых (по очереди, чтобы погоня
+  // делилась), а лимиты считаются на банду целиком
+  wantedHeads() {
+    const room = this.room;
+    const list = [...room.players.values()].filter(p => !p.isBot && p.alive && p.stars > 0);
+    if (!room.gang || list.length < 2) return list;
+    this.gangTurn = ((this.gangTurn || 0) + 1) % list.length;
+    return [list[this.gangTurn]];
   }
   // сколько техники этого вида гонится за игроком (pid 0 - за всеми); вышедший спецназ тоже в деле:
   // пока бьются хотя бы двое бойцов, новый грузовик не едет
   unitFor(pid, kind) {
     let n = 0;
     const role = kind === 'tank' ? 'tank' : 'police';
-    for (const v of this.room.vehicles.list.values()) if (!v.dead && v.kind === kind && v.state === 'npc' && v.role === role && (!pid || v.target === pid)) n++;
+    // в банде техника, которая ловит любого из неё, - общая
+    const room = this.room, gangMember = id => room.gang && id > 0 && room.players.has(id) && !room.players.get(id).isBot;
+    const match = id => !pid || id === pid || (gangMember(pid) && gangMember(id));
+    for (const v of room.vehicles.list.values()) if (!v.dead && v.kind === kind && v.state === 'npc' && v.role === role && match(v.target)) n++;
     if (kind === 'swat') {
       let f = 0;
-      for (const o of this.list.values()) if (o.alive && o.kind === K.SWAT && o.state === 'fight' && (!pid || o.target === pid)) f++;
+      for (const o of this.list.values()) if (o.alive && o.kind === K.SWAT && o.state === 'fight' && match(o.target)) f++;
       if (f >= 2) n++;
     }
     return n;
@@ -936,7 +1003,8 @@ class Npcs {
       }
       return;
     }
-    const t = room.players.get(h.target);
+    let t = room.players.get(h.target);
+    if (room.gang && h.state === 'fly') { t = this.retarget(t, h.x, h.y); if (t) h.target = t.id; }
     if (h.state === 'fly' && (!t || !t.alive || !(t.stars >= 4))) h.state = 'leave';
     let gx, gy;
     if (h.state === 'leave') {

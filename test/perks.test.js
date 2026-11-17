@@ -1,7 +1,8 @@
 'use strict';
 /* Мелочи 17.11.2026: вооружённые жители не убегают, а отстреливаются; полицейская машина даёт дробовик и +50 брони,
    грузовик спецназа - автомат и броню до 100 (один раз на машину); в скорой лечит 3 здоровья в секунду; аптечек вдвое
-   больше; огнемёт по людям вдвое сильнее; после гриба выносливость не кончается. */
+   больше; огнемёт по людям вдвое сильнее; после гриба выносливость не кончается, на рывке можно стрелять, урона
+   вдвое меньше. */
 const assert = require('assert');
 const KV = require('../public/shared.js');
 const { Room } = require('../game/room');
@@ -123,5 +124,26 @@ me.tripUntil = room.time + 10; me.sprint = true; me.stamina = 50;
 for (let i = 0; i < 3 * KV.TICK_RATE; i++) { room.time += DT; me.lastMoveTime = room.time; room.updateStamina(); }
 console.log(`гриб: выносливость за 3 с рывка ${me.stamina} из ${STAMINA.MAX}`);
 assert.strictEqual(me.stamina, STAMINA.MAX, 'после гриба выносливость не кончается');
+
+// 8. под грибом на рывке стреляют, а урона прилетает вдвое меньше; без гриба на рывке не стреляют
+function sprintShots(trip) {
+  me.tripUntil = trip ? room.time + 10 : 0; me.sprint = true; me.stamina = 50;
+  me.ammo[W.PISTOL] = 30; me.cur = W.PISTOL; me.fire = true; me.nextShot = 0; me.vehicle = 0; me.rollUntil = 0;
+  let shots = 0;
+  const s0 = room.spawnShot; room.spawnShot = (...a) => { shots++; return s0.apply(room, a); };
+  for (let i = 0; i < KV.TICK_RATE; i++) { room.time += DT; me.lastMoveTime = room.time; room.updateFiring(me); }
+  room.spawnShot = s0; me.fire = false; me.sprint = false;
+  return shots;
+}
+const sprintNoTrip = sprintShots(false), sprintTrip = sprintShots(true);
+me.hp = 100; me.ar = 0; me.prot = 0; me.godUntil = 0;
+room.damage(me, 40, 0, W.PISTOL, me.x, me.y);
+const tripLost = 100 - me.hp;
+me.tripUntil = 0; me.hp = 100;
+room.damage(me, 40, 0, W.PISTOL, me.x, me.y);
+const plainLost = 100 - me.hp;
+console.log(`рывок: выстрелов за 1 с без гриба ${sprintNoTrip}, под грибом ${sprintTrip}; удар 40: под грибом -${tripLost}, без гриба -${plainLost}`);
+assert.ok(sprintNoTrip === 0 && sprintTrip >= 3, 'под грибом на рывке стреляют, без гриба - нет');
+assert.ok(tripLost === 20 && plainLost === 40, 'под грибом урона вдвое меньше');
 
 console.log('perks: OK');

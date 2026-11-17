@@ -89,7 +89,8 @@ wss.on('connection', ws => {
       let room = rooms.get(id);
       if (!room) {
         if (rooms.size >= MAX_ROOMS) { ws.send(JSON.stringify({ t: 'err', text: 'Сервер занят, попробуйте позже' })); return; }
-        room = new Room(id);
+        // режим выбирает тот, кто создаёт комнату (он же в ссылке-приглашении); вошедшие позже играют в режиме комнаты
+        room = new Room(id, { gang: msg.mode === 'gang' });
         rooms.set(id, room);
       }
       const p = room.addHuman(ws, cleanName(msg.name));

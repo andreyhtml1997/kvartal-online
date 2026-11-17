@@ -1012,6 +1012,9 @@
     }
   }
 
+  // свои в режиме «Банда»: подписи и обводка на радаре
+  const ALLY_COL = '#7dff9a';
+
   // Круги-чекпоинты: цвет, подпись с ценой, значок (крест, пистолет, гаечный ключ)
   const SHOP_COL = { med: '255,90,90', gun: '255,210,63', fix: '90,170,255' };
   const SHOP_LABEL = { med: `Больница $${KV.SHOP_PRICE.med}`, gun: `Оружие $${KV.SHOP_PRICE.gun}`, fix: `Мастерская $${KV.SHOP_PRICE.fix}` };
@@ -2101,7 +2104,7 @@
     ws.binaryType = 'arraybuffer';
     S.ws = ws;
     let welcomed = false;
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: S.room, name: S.name }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: S.room, name: S.name, mode: S.mode || 'ffa' }));
     ws.onmessage = ev => {
       if (typeof ev.data !== 'string') { Voice.onPacket(ev.data); return; } // голос других игроков
       let m;
@@ -2230,15 +2233,17 @@
     $('deathScreen').hidden = true;
     $('a11yPanel').hidden = true;
     document.body.classList.add('playing');
-    $('boardRoom').textContent = 'Комната ' + S.room;
+    S.gang = m.mode === 'gang';
+    S.mode = S.gang ? 'gang' : 'ffa';
+    $('boardRoom').textContent = 'Комната ' + S.room + (S.gang ? ' · Банда' : '');
     S.botsOn = m.bots !== false;
     S.humans = [];
     syncBotsBtn();
-    try { history.replaceState(null, '', '?room=' + encodeURIComponent(S.room)); } catch (_) {}
+    try { history.replaceState(null, '', '?room=' + encodeURIComponent(S.room) + (S.gang ? '&mode=gang' : '')); } catch (_) {}
     syncA11y();
     updateRotateHint();
     updateHud(true);
-    toast('Комната ' + S.room + ' - пригласите друзей через шестерёнку', 3500);
+    toast(S.gang ? 'Банда ' + S.room + ': друг друга не раним, розыск общий. Зовите своих через шестерёнку' : 'Комната ' + S.room + ' - пригласите друзей через шестерёнку', 4000);
   }
 
   function onTeleport(m) {
@@ -2320,7 +2325,7 @@
     if ((stars || 0) !== S.stars) {
       if ((stars || 0) > S.stars) {
         const who = ['', '', '', ' - едет спецназ!', ' - летит вертолёт!', ' - армия и танки!'][stars] || '';
-        toast(stars === 1 ? 'Вас разыскивает полиция!' : `Розыск: ${'★'.repeat(stars)}${who}`, 2600);
+        toast(stars === 1 ? (S.gang ? 'Банду разыскивает полиция!' : 'Вас разыскивает полиция!') : `Розыск${S.gang ? ' банды' : ''}: ${'★'.repeat(stars)}${who}`, 2600);
         Sound.siren1();
       }
       S.stars = stars || 0;
@@ -2701,8 +2706,8 @@
   syncSoundBtn();
   $('btnInvite').addEventListener('click', async () => {
     showGear(false);
-    const url = location.origin + '/?room=' + encodeURIComponent(S.room);
-    const text = 'Заходи ко мне в Квартал - перестрелка в городе:';
+    const url = location.origin + '/?room=' + encodeURIComponent(S.room) + (S.gang ? '&mode=gang' : '');
+    const text = S.gang ? 'Заходи ко мне в банду в Квартале - отбиваемся от полиции вместе:' : 'Заходи ко мне в Квартал - перестрелка в городе:';
     if (navigator.share && isTouch) {
       try { await navigator.share({ title: 'Квартал', text, url }); return; } catch (_) {}
     }
@@ -2925,7 +2930,7 @@
       if (p.id === S.myId || p.hidden || !(p.flags & 1) || (p.flags & 8)) continue;
       if (!p.bot) shownHumans.add(p.id);
       g.fillStyle = p.color;
-      g.strokeStyle = '#fff';
+      g.strokeStyle = S.gang && !p.bot ? ALLY_COL : '#fff';
       g.lineWidth = Math.max(1, u * 0.8);
       g.beginPath(); g.arc(toX(p.rx), toY(p.ry), 3 * u, 0, Math.PI * 2); g.fill(); g.stroke();
       if (!p.bot) drawMapName(g, p.name, toX(p.rx), toY(p.ry) - 5 * u, u);
@@ -2940,7 +2945,7 @@
       const px = toX(x), py = toY(y);
       if (px >= 0 && py >= 0 && px <= size && py <= size) {
         g.fillStyle = p.color;
-        g.strokeStyle = '#fff';
+        g.strokeStyle = S.gang ? ALLY_COL : '#fff';
         g.lineWidth = Math.max(1, u * 0.9);
         g.beginPath(); g.arc(px, py, 3.6 * u, 0, Math.PI * 2); g.fill(); g.stroke();
         drawMapName(g, p.name, px, py - 5.5 * u, u);
@@ -3006,13 +3011,35 @@
   const nameInput = $('nameInput');
   try { nameInput.value = localStorage.getItem('kv_name') || ''; } catch (_) {}
   const inviteRoom = cleanRoom(new URLSearchParams(location.search).get('room'));
-  if (inviteRoom.length >= 3) {
+  const inviteGang = new URLSearchParams(location.search).get('mode') === 'gang';
+  const showInvite = (room, gang) => {
     $('inviteBlock').hidden = false;
     $('createBlock').hidden = true;
-    $('inviteRoom').textContent = inviteRoom;
-  }
+    $('inviteRoom').textContent = room;
+    $('inviteMode').textContent = gang ? ' - режим «Банда»: друг друга не раним, розыск общий' : '';
+  };
+  if (inviteRoom.length >= 3) showInvite(inviteRoom, inviteGang);
 
-  function join(room) {
+  // режим новой комнаты: «Все против всех» или «Банда» (запоминается)
+  let menuMode = 'ffa';
+  try { if (localStorage.getItem('kv_mode') === 'gang') menuMode = 'gang'; } catch (_) {}
+  const MODE_NOTE = {
+    ffa: 'Каждый сам за себя - стрелять можно в кого угодно.',
+    gang: 'Все в комнате - одна банда: друг друга не раним, розыск общий - полиция гонится за всеми, отбиваемся вместе.'
+  };
+  function setMenuMode(mode) {
+    menuMode = mode === 'gang' ? 'gang' : 'ffa';
+    try { localStorage.setItem('kv_mode', menuMode); } catch (_) {}
+    $('modeFfa').setAttribute('aria-checked', menuMode === 'ffa' ? 'true' : 'false');
+    $('modeGang').setAttribute('aria-checked', menuMode === 'gang' ? 'true' : 'false');
+    $('modeNote').textContent = MODE_NOTE[menuMode];
+  }
+  $('modeFfa').addEventListener('click', () => setMenuMode('ffa'));
+  $('modeGang').addEventListener('click', () => setMenuMode('gang'));
+  setMenuMode(menuMode);
+
+  function join(room, mode) {
+    S.mode = mode === 'gang' ? 'gang' : 'ffa';
     room = cleanRoom(room);
     if (room.length < 3) { setStatus('Код комнаты - от 3 латинских букв или цифр'); return; }
     S.name = nameInput.value.trim().slice(0, 16) || 'Игрок';
@@ -3050,14 +3077,15 @@
     $('menu').hidden = false;
     document.body.classList.remove('playing');
     setStatus('');
-    if (S.room) { $('inviteBlock').hidden = false; $('createBlock').hidden = true; $('inviteRoom').textContent = S.room; }
+    if (S.room) showInvite(S.room, S.gang);
     try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (_) {}
   }
 
-  $('btnCreate').addEventListener('click', () => join(randomRoom()));
-  $('btnNewRoom').addEventListener('click', () => join(randomRoom()));
-  $('btnJoin').addEventListener('click', () => join($('inviteRoom').textContent));
-  $('btnCode').addEventListener('click', () => join($('codeInput').value));
+  $('btnCreate').addEventListener('click', () => join(randomRoom(), menuMode));
+  $('btnNewRoom').addEventListener('click', () => join(randomRoom(), menuMode));
+  // по приглашению: режим из ссылки (если комнату пришлось создать заново, например после перезапуска сервера)
+  $('btnJoin').addEventListener('click', () => join($('inviteRoom').textContent, S.room && $('inviteRoom').textContent === S.room ? S.mode : inviteGang ? 'gang' : 'ffa'));
+  $('btnCode').addEventListener('click', () => join($('codeInput').value, menuMode));
   $('codeInput').addEventListener('keydown', e => { if (e.key === 'Enter') join($('codeInput').value); });
   nameInput.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
@@ -3107,7 +3135,8 @@
     S.me.spinAt = now;
     S.me.spinT = WEAPONS[S.me.cur].spin && S.me.alive && input.fire ? Math.min(1000, (S.me.spinT || 0) + dtp) : Math.max(0, (S.me.spinT || 0) - dtp * 2);
     if (!S.me.alive || !(input.fire || input.pressFire)) return;
-    if (S.me.sprinting || now < S.me.rollUntil) { input.pressFire = false; return; }
+    // на рывке не стреляют - кроме как под грибом (как на сервере)
+    if ((S.me.sprinting && !S.trip) || now < S.me.rollUntil) { input.pressFire = false; return; }
     // в танке - снаряд из башни раз в 1.6 с; оружие в руках не тратится (как на сервере)
     if (S.me.vehicle && S.car && S.car.kind === 4) {
       if (now < S.me.nextShot) return;
@@ -3152,8 +3181,8 @@
     if (!S.inGame || !S.ws || S.ws.readyState !== 1 || now - S.lastSend < SEND_MS) return;
     S.lastSend = now;
     // f - атака зажата сейчас; q - было новое нажатие с прошлого сообщения (один выстрел, даже если уже отпустили)
-    const fire = input.fire && !S.me.sprinting;
-    const press = input.pressSend && !S.me.sprinting;
+    const fire = input.fire && (!S.me.sprinting || !!S.trip);
+    const press = input.pressSend && (!S.me.sprinting || !!S.trip);
     input.pressSend = false;
     const msg = { t: 'i', a: r3(S.me.a), f: fire ? 1 : 0, s: S.me.sprinting ? 1 : 0, v: [Math.round(S.view.hw), Math.round(S.view.hh)] };
     if (press) msg.q = 1;
@@ -3477,7 +3506,8 @@
       v.drawnAt = now; // для проверки «каждого стрелка видно»
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
-        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - (v.kind === 5 ? 1.3 : 2.4), hp: v.kind === 5 ? (v.driver === S.myId ? S.me.hp : d.hp) : 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
+        if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - (v.kind === 5 ? 1.3 : 2.4), hp: v.kind === 5 ? (v.driver === S.myId ? S.me.hp : d.hp) : 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128),
+          col: S.gang && !d.bot && v.driver !== S.myId ? ALLY_COL : undefined });
       }
     }
 
@@ -3513,7 +3543,7 @@
       else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
       if (p.flags & 32) burnFx(p.rx, p.ry);
       if (p.flags & 64) tripHalo(p.rx, p.ry, now);
-      tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false, talk: !!(p.flags & 128) });
+      tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false, talk: !!(p.flags & 128), col: S.gang && !p.bot ? ALLY_COL : undefined });
     }
     for (const [id, n] of S.peds) {
       if (Date.now() - n.seen > 1000) { S.peds.delete(id); continue; }

@@ -25,6 +25,7 @@ const BURN_DMG = 6;             // урон горящему игроку за 0
 const MED_EVERY = [20, 28];     // с: отдельные аптечки сверх обычных припасов - аптечек вдвое больше (17.11.2026)
 const SHOP_TIME = { med: 1.5, gun: 1.5, fix: 2 }; // с: сколько постоять на круге, чтобы купить
 const GRENADE_DRAG = 2.2;       // 1/с: брошенная граната тормозит и за ~2 с долетает до точки прицела
+const SHROOM_DMG = 0.5;         // какая доля урона доходит, пока действует гриб (решение владельца 17.11.2026)
 const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
 const REBUILD_EVERY = 9;        // тактов между кирпичами одного дома (0.3 с)
 const PICKUP_LIFE = 120;        // с
@@ -55,8 +56,11 @@ function emptyEvents() {
 }
 
 class Room {
-  constructor(id) {
+  constructor(id, opts) {
     this.id = id;
+    // режим «Банда» (17.11.2026): все люди в комнате - одна банда: друг друга не ранят, розыск общий (npcs.gang*);
+    // боты, если их включить, - чужие. Режим задаётся при создании комнаты и не меняется
+    this.gang = !!(opts && opts.gang);
     this.seed = (Math.random() * 4294967296) >>> 0;
     this.map = generateMap(this.seed);
     this.players = new Map();
@@ -123,6 +127,7 @@ class Room {
     this.fillBots();
     this.send(p, this.welcome(p));
     this.ev.pj.push(this.publicInfo(p));
+    if (this.gang) this.npcs.gangJoin(p);
     this.spawn(p);
     this.sbDirty = true;
     return p;
@@ -168,7 +173,9 @@ class Room {
     const m = this.map;
     const tiles = m.spawnTiles;
     let best = tiles[Math.floor(Math.random() * tiles.length)], bestScore = -1;
-    for (let i = 0; i < 28; i++) {
+    const near = this.gang && !p.isBot ? this.spawnNearMate(p) : -1;
+    if (near >= 0) { best = near; bestScore = 1e9; }
+    for (let i = 0; i < 28 && near < 0; i++) {
       const k = tiles[Math.floor(Math.random() * tiles.length)];
       const x = (k % m.w) + 0.5, y = Math.floor(k / m.w) + 0.5;
       if (!KV.circleFree(m, x, y, KV.PLAYER_R) || this.vehicles && this.vehicles.personBlocked(x, y, null)) continue;
@@ -189,6 +196,29 @@ class Room {
     this.ev.sp.push([p.id, r2(p.x), r2(p.y)]);
     this.send(p, { t: 'tp', x: p.x, y: p.y, tp: p.tp, sp: 1, veh: 0 });
   }
+
+  // Банда: возрождаемся в 6-16 м от живого товарища, на месте для появления (не на дороге, не в стене, не под машиной),
+  // чтобы сразу вернуться в бой вместе. Нет живых товарищей или места - -1 (обычное появление вдали от всех)
+  spawnNearMate(p) {
+    const m = this.map;
+    if (!this.spawnMask) { this.spawnMask = new Uint8Array(m.w * m.h); for (const k of m.spawnTiles) this.spawnMask[k] = 1; }
+    const mates = [...this.players.values()].filter(o => o !== p && o.alive && !o.isBot);
+    if (!mates.length) return -1;
+    const mate = mates[Math.floor(Math.random() * mates.length)];
+    for (let i = 0; i < 80; i++) {
+      const a = Math.random() * Math.PI * 2, r = 6 + Math.random() * 10;
+      const tx = Math.floor(mate.x + Math.cos(a) * r), ty = Math.floor(mate.y + Math.sin(a) * r);
+      if (tx < 1 || ty < 1 || tx >= m.w - 1 || ty >= m.h - 1) continue;
+      const k = ty * m.w + tx;
+      if (!this.spawnMask[k] || !KV.circleFree(m, tx + 0.5, ty + 0.5, KV.PLAYER_R) || this.vehicles.personBlocked(tx + 0.5, ty + 0.5, null)) continue;
+      return k;
+    }
+    return -1;
+  }
+
+  // свои в банде: оба - люди (боты всегда чужие), разные игроки, режим «Банда»
+  allies(a, b) { return this.gang && !!a && !!b && a !== b && !a.isBot && !b.isBot; }
+  allyHit(t, attackerId) { return this.gang && attackerId > 0 && attackerId !== t.id && this.allies(t, this.players.get(attackerId)); }
 
   // Стрелок (бот, житель) виден на экране у живого игрока? Из-за края экрана по игроку не стреляют -
   // иначе пули «вылетают из пустоты». По ботам и жителям - без ограничения.
@@ -221,7 +251,8 @@ class Room {
       },
       players: [...this.players.values()].map(o => this.publicInfo(o)),
       pickups: [...this.pickups.values()].map(pk => [pk.id, pk.kind, pk.w, r2(pk.x), r2(pk.y)]),
-      bots: this.botsOn
+      bots: this.botsOn,
+      mode: this.gang ? 'gang' : 'ffa'
     };
   }
 
@@ -446,8 +477,8 @@ class Room {
     if (!p.alive || !(p.fire || p.fireLatch)) return;
     if (this.time < p.nextShot) return;
     if (this.time < p.rollUntil) { p.fireLatch = false; return; } // катится после прыжка из машины
-    // на рывке не стреляют
-    if (p.sprint && !p.vehicle && this.time - p.lastMoveTime < 0.25 && p.stamina > 0) { p.fireLatch = false; return; }
+    // на рывке не стреляют - кроме как под грибом (решение владельца 17.11.2026)
+    if (p.sprint && !p.vehicle && this.time - p.lastMoveTime < 0.25 && p.stamina > 0 && !(p.tripUntil > this.time)) { p.fireLatch = false; return; }
     if (p.cur !== W.FISTS && !WEAPONS[p.cur].noAmmo && !(p.ammo[p.cur] > 0)) { p.cur = this.bestWeapon(p); p.fireLatch = false; return; }
     // в танке атака - снаряд из башни туда, куда целишься; оружие в руках при этом не тратится
     const tank = p.vehicle ? this.vehicles.list.get(p.vehicle) : null;
@@ -575,7 +606,7 @@ class Room {
     const ax = Math.cos(p.a), ay = Math.sin(p.a);
     let target = null, bestD = w.range + 0.5;
     for (const o of this.players.values()) {
-      if (o === p || !o.alive || !this.exposed(o)) continue;
+      if (o === p || !o.alive || !this.exposed(o) || this.allies(o, p)) continue;
       const dx = o.x - p.x, dy = o.y - p.y, d = Math.hypot(dx, dy);
       if (d > w.range + 0.5 || d >= bestD) continue;
       if ((dx * ax + dy * ay) / (d || 1) < 0.45) continue; // примерно ±63° перед собой
@@ -622,7 +653,7 @@ class Room {
       let tBest = hitT ? hitT.t : Infinity, target = null, car = null, npcT = null, heli = null;
       if (!high) {
         for (const p of this.players.values()) {
-          if (!p.alive || p.id === b.owner || !this.exposed(p)) continue; // мотоциклиста пуля находит
+          if (!p.alive || p.id === b.owner || !this.exposed(p) || this.allyHit(p, b.owner)) continue; // мотоциклиста пуля находит, своих в банде - нет
           const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.5);
           if (t >= 0 && t <= step && t < tBest) { tBest = t; target = p; }
         }
@@ -688,7 +719,7 @@ class Room {
     const w = WEAPONS[b.w];
     const tWall = hitT ? hitT.t : Infinity;
     for (const p of this.players.values()) {
-      if (!p.alive || p.id === b.owner || !this.exposed(p) || (b.hit && b.hit.has(p.id))) continue;
+      if (!p.alive || p.id === b.owner || !this.exposed(p) || this.allyHit(p, b.owner) || (b.hit && b.hit.has(p.id))) continue;
       if (Math.abs(p.x - b.x) > step + 1 || Math.abs(p.y - b.y) > step + 1) continue;
       const t = geom.rayCircle(b.x, b.y, b.dx, b.dy, p.x, p.y, 0.65);
       if (t < 0 || t > step || t > tWall) continue;
@@ -762,6 +793,8 @@ class Room {
   // armorK - какую долю урона может взять броня (от машины броня почти не спасает); silent - без брызг (горение)
   damage(t, amount, attackerId, weaponId, hx, hy, armorK = 0.6, silent = false) {
     if (!t.alive || amount <= 0 || this.time < t.prot || t.godUntil > this.time) return;
+    if (this.allyHit(t, attackerId)) return; // банда: свои друг друга не ранят ничем
+    if (t.tripUntil > this.time) amount *= SHROOM_DMG; // под грибом урона вдвое меньше (броня - поверх)
     const absorbed = Math.min(t.ar, amount * armorK);
     t.ar -= absorbed;
     t.hp -= amount - absorbed;
@@ -771,7 +804,7 @@ class Room {
 
   // Человек загорелся от огнемёта: горит secs секунд, урон засчитывается тому, кто поджёг
   ignite(p, by, secs) {
-    if (!p.alive || !this.exposed(p) || this.time < p.prot) return;
+    if (!p.alive || !this.exposed(p) || this.time < p.prot || this.allyHit(p, by)) return;
     p.burnUntil = Math.max(p.burnUntil, this.time + secs);
     p.burnBy = by;
   }
@@ -1216,7 +1249,7 @@ class Room {
       if (!v) return;
       v.color = (v.color + 1 + Math.floor(Math.random() * 7)) % 8;
       v.hp = v.maxHp || CAR.HP; v.burn = 0;
-      if (p.stars) { p.stars = 0; p.heat = 0; this.ev.ws.push([p.id, 0]); }
+      this.npcs.clearStars(p);
     }
     p.money -= price;
     this.send(p, { t: 'shop', k: s.kind, ok: price, w });
