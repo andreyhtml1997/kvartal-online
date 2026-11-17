@@ -410,7 +410,7 @@ class Vehicles {
     if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') room.npcs.crime(att, 15);
     this.remove(v);
     room.ev.vx.push(v.id);
-    room.explode(v.x, v.y, CAR_BLAST, v.lastAttacker, -1, skipVeh);
+    room.explode(v.x, v.y, CAR_BLAST, v.lastAttacker, -1, skipVeh, { x: v.x, y: v.y, a: v.a });
     room.carLoot(v.x, v.y, v.lastAttacker);
     if (v.spawn) this.respawnQueue.push({ at: room.time + PARKED_RESPAWN, sp: v.spawn });
   }

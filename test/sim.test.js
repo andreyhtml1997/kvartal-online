@@ -12,6 +12,7 @@ class FakeWs {
 }
 
 const room = new Room('test1');
+room.botsOn = true; // по умолчанию ботов нет - здесь нужен бой, включаем их, как переключателем под шестерёнкой
 const ws = new FakeWs();
 const me = room.addHuman(ws, 'Тест');
 assert.ok(me, 'игрок добавлен');

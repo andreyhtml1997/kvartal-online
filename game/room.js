@@ -74,7 +74,7 @@ class Room {
     this.ev = emptyEvents();
     this.emptySince = Date.now();
     this.sbDirty = true;
-    this.botsOn = true;           // переключатель «Боты» под шестерёнкой, на всю комнату
+    this.botsOn = false;          // переключатель «Боты» под шестерёнкой, на всю комнату; по умолчанию выключены (решение владельца 17.11.2026)
     this.bots = new Bots(this);
     this.vehicles = new Vehicles(this);
     this.npcs = new Npcs(this);
@@ -713,8 +713,9 @@ class Room {
     this.sbDirty = true;
   }
 
-  // skipVeh - машина, которую этот взрыв не трогает (танк, об который взорвалась машина)
-  explode(x, y, blast, ownerId, weaponId, skipVeh) {
+  // skipVeh - машина, которую этот взрыв не трогает (танк, об который взорвалась машина);
+  // body - кузов взорвавшейся машины: NPC в 3 м от него погибают (npcs.explode)
+  explode(x, y, blast, ownerId, weaponId, skipVeh, body) {
     const m = this.map;
     this.ev.x.push([r2(x), r2(y), blast.r]);
     for (const p of this.players.values()) {
@@ -725,7 +726,7 @@ class Room {
       if (!geom.losClear(m, x, y, p.x, p.y, false)) dmg *= 0.4;
       this.damage(p, dmg, ownerId, weaponId, p.x, p.y);
     }
-    this.npcs.explode(x, y, blast, ownerId, weaponId);
+    this.npcs.explode(x, y, blast, ownerId, weaponId, body);
     // Машины: урон (ракета поджигает сразу), взрывная волна отбрасывает все машины вокруг.
     // Сидящий внутри от взрыва рядом не страдает - погибнет, только если взорвётся сама машина.
     for (const v of [...this.vehicles.list.values()]) {

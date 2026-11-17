@@ -21,6 +21,7 @@ const NPC_ID = -100;                       // «кто стрелял» у NPC: 
 // пули полиции, спецназа, армии и вертолёта своих не задевают (иначе в перестрелке они перебивают друг друга:
 // замер 17.11 - за минуту без единого выстрела игрока гибло до 15 из 18 бойцов спецназа)
 const LAW_SHOT = new Set([NPC_ID - 1, NPC_ID - 5, NPC_ID - 6, NPC_ID - 7]);
+const LAW_AIM = 3.5; // разброс у полиции, спецназа и армии шире в 3.5 раза: попадают в ~3 раза реже (замер 17.11 на 3 звёздах: полиция 26% -> 9%, спецназ 20% -> 7%, урон по стоящему игроку ~70 -> ~28 в секунду)
 const AMBIENT_NEAR = 12, AMBIENT_CAP = 45; // прохожих вокруг каждого игрока и всего
 const WALK = 1.4, RUN = 6.2, JOG = 4.3;
 const STAR_HEAT = [0, 25, 90, 200, 380, 650];
@@ -28,6 +29,9 @@ const POLICE_CAP = 7, AMB_CAP = 2;
 // вертолёт: прочность (2 ракеты в упор, 3 рядом или ~25 попаданий из автомата), сколько всего; танков всего; снаряд танка раз в 3-4 с
 const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 3, TANK_SHELL = 3.5;
 const HELI_BLAST = { r: 4.5, dmg: 140, tile: 420 };
+// NPC ближе этого к взрыву (у взорвавшейся машины - к её кузову) погибает сразу, если его не закрывает стена.
+// Решение владельца 17.11.2026: машина взорвалась рядом с полицией - полиция погибла; так же от любого взрыва.
+const BLAST_KILL = 3;
 const EDGE = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // обход квартала по часовой: верх, право, низ, лево
 const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;
@@ -361,8 +365,11 @@ class Npcs {
     const now = this.room.time;
     n.nextShot = now + 1 / (w.rate * (LAW.has(n.kind) ? 0.75 : 0.55));
     n.aimJ = (n.aimJ + (Math.random() - 0.5) * 0.3) * 0.9;
-    const err = (n.kind === K.SWAT ? 0.07 : LAW.has(n.kind) ? 0.08 : 0.12) + Math.min(0.25, d * 0.011);
-    const a = Math.atan2(ty - (oy === undefined ? n.y : oy), tx - (ox === undefined ? n.x : ox)) + n.aimJ + (Math.random() - 0.5) * err * 2;
+    // полиция, спецназ и армия мажут сильнее (решение владельца 17.11: были слишком меткими - на 3 звёздах
+    // полиция попадала 26% пуль, спецназ 16%, ~70 урона в секунду по стоящему на открытом месте игроку)
+    const k = LAW.has(n.kind) ? LAW_AIM : 1;
+    const err = ((n.kind === K.SWAT ? 0.07 : LAW.has(n.kind) ? 0.08 : 0.12) + Math.min(0.25, d * 0.011)) * k;
+    const a = Math.atan2(ty - (oy === undefined ? n.y : oy), tx - (ox === undefined ? n.x : ox)) + n.aimJ * k + (Math.random() - 0.5) * err * 2;
     n.a = a; n.shotAt = now;
     this.room.spawnShot(ox === undefined ? n.x : ox, oy === undefined ? n.y : oy, a, w, NPC_ID - n.kind, vehId || 0, d, n.id);
     if (this.tick % 2 === 0) this.noise(n.x, n.y, 9);
@@ -441,13 +448,18 @@ class Npcs {
     }
     return best;
   }
-  explode(x, y, blast, ownerId, weaponId) {
+  // body - кузов взорвавшейся машины {x, y, a}: от него считается «рядом»
+  explode(x, y, blast, ownerId, weaponId, body) {
     for (const n of [...this.list.values()]) {
       if (!n.alive || n.veh) continue;
       const d = Math.hypot(n.x - x, n.y - y);
+      const near = body ? KV.distToOBB(n.x, n.y, body.x, body.y, body.a, CAR.HL, CAR.HW) : d;
+      if (near > BLAST_KILL && d >= blast.r + 0.4) continue;
+      const los = geom.losClear(this.map, x, y, n.x, n.y, false);
+      if (near <= BLAST_KILL && los) { this.damage(n, n.hp + 1, ownerId, weaponId, n.x, n.y); continue; }
       if (d >= blast.r + 0.4) continue;
       let dmg = blast.dmg * (1 - Math.max(0, d - 0.4) / blast.r);
-      if (!geom.losClear(this.map, x, y, n.x, n.y, false)) dmg *= 0.4;
+      if (!los) dmg *= 0.4;
       this.damage(n, dmg, ownerId, weaponId, n.x, n.y);
     }
     // вертолёт рядом со взрывом (ракета в него или взрыв под ним): расстояние - от корпуса, ракета рвётся о него

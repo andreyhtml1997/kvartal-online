@@ -24,7 +24,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const snd = await kv(() => window.__kv.Sound.loadedCount());
     check(snd === 29, `загружено звуков из файлов: ${snd} из 29`);
     const players = await kv(() => window.__kv.S.players.size);
-    check(players === 10, `в комнате 10 персонажей (${players})`);
+    check(players === 1, `ботов по умолчанию нет - в комнате только вы (${players})`);
     // колёсико мыши листает всё оружие по кругу, включая огнемёт и пилу
     await kv(() => window.__kv.send({ t: 'dbg', god: 1, give: 1 }));
     await sleep(500);

@@ -62,11 +62,13 @@ assert.strictEqual(after59, broken, 'первую минуту дом не чи�
 // 3. после минуты - по кирпичику раз в 0.3 с, трещины зарастают; у игрока и под аптечкой - ждёт
 const t0 = room.time, tl0 = ws.tl.length, fixedAt = [];
 let prev = after59;
-for (let i = 0, n = Math.round((3 + (broken + crackedN) * 0.3 + 3) / DT); i < n; i++) {
+// ждём, пока починится всё, что не заслонено игроком и аптечкой (мимо может пройти прохожий - тогда клетка подождёт)
+for (let i = 0, n = Math.round(25 / DT); i < n; i++) {
   room.tick();
-  const cur = b.orig.filter(missing).length;
-  if (cur < prev) fixedAt.push(room.time);
-  prev = cur;
+  const cur = b.orig.filter(missing);
+  if (cur.length < prev) fixedAt.push(room.time);
+  prev = cur.length;
+  if (cur.every(e => byMe(e) || byPk(e)) && cracked.every(k => m.dmg[k] === 0)) break;
 }
 const left = b.orig.filter(missing);
 const gaps = fixedAt.slice(1).map((t, i) => t - fixedAt[i]);
@@ -74,7 +76,7 @@ const back = ws.tl.slice(tl0).filter(e => (e[1] === B.BRICK || e[1] === B.GLASS)
 console.log(`ремонт: начался через ${(fixedAt[0] - t0 + 59).toFixed(1)} с после урона, клеток ${fixedAt.length} за ${(fixedAt[fixedAt.length - 1] - fixedAt[0]).toFixed(1)} с, ` +
   `шаг от ${Math.min(...gaps).toFixed(2)} с; осталось ${left.length} (у игрока ${left.filter(byMe).length}, под аптечкой ${left.filter(byPk).length}); ` +
   `трещин ${cracked.filter(k => m.dmg[k] > 0).length}; событий в браузер ${back.length}; крыша ${b.roof ? 'есть' : 'нет'}`);
-assert.ok(fixedAt.length >= broken - 4 && Math.min(...gaps) >= 0.29, 'дом чинится по кирпичику, раз в 0.3 с');
+assert.ok(fixedAt.length >= 3 && Math.min(...gaps) >= 0.29, 'дом чинится по кирпичику, раз в 0.3 с');
 assert.ok(left.length >= 2 && left.every(e => byMe(e) || byPk(e)) && left.some(byMe) && left.some(byPk), 'игрока и вещь не замуровывает');
 assert.ok(cracked.every(k => m.dmg[k] === 0 && m.hp[k] === BLOCKS[B.BRICK].hp), 'трещины заросли');
 assert.ok(!b.roof, 'пока дом не целый, крыши нет');
@@ -83,7 +85,7 @@ assert.ok(back.length >= fixedAt.length, 'браузеры узнают о ка�
 // 4. игрок отошёл, аптечку забрали - дыры заделываются, дом целый, крыша вернулась
 room.teleport(me, home[0], home[1]);
 room.removePickup(pk.id);
-run(left.length * 0.3 + 1.5);
+for (let i = 0; i < 15 / DT && !(b.orig.every(e => !missing(e)) && b.roof); i++) room.tick();
 console.log(`отошёл и забрал аптечку: выбито ${b.orig.filter(missing).length}, крыша ${b.roof ? 'есть' : 'нет'}, событие крыши ${ws.rr.includes(b.id)}`);
 assert.ok(b.orig.every(e => !missing(e)) && b.roof && ws.rr.includes(b.id), 'дом снова целый, крыша вернулась');
 

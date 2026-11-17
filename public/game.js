@@ -44,7 +44,7 @@
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
-    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0,
+    humans: [], botsOn: false, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0,
     helis: new Map(), tanks: [], helisMM: [] // вертолёты рядом; танки и вертолёты на радаре
   };
 

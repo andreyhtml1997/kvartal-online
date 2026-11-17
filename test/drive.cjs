@@ -20,7 +20,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(800);
     const kv = (f, arg) => pc.evaluate(f, arg);
 
-    // в комнате 10 персонажей: боты угоняют и взрывают машины - на время проверок машин выключаем их
+    // ботов по умолчанию нет (если включены - угоняют и взрывают машины): на время проверок машин - выключены
     await kv(() => window.__kv.send({ t: 'bots', on: false }));
     // рывок: с Shift бежит быстрее, выносливость тратится
     await kv(() => window.__kv.send({ t: 'dbg', god: 1 }));
