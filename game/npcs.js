@@ -929,14 +929,19 @@ class Npcs {
       if (s >= 5 && this.unitFor(p.id, 'tank') < 2 && this.unitFor(0, 'tank') < TANK_CAP) this.spawnUnit(p, 'tank');
     }
   }
-  // за кем высылать погоню: в одиночке - каждый, кто в розыске; в банде - один из живых (по очереди, чтобы погоня
-  // делилась), а лимиты считаются на банду целиком
+  // за кем высылать погоню: в одиночке - каждый, кто в розыске; в банде - один из живых, за кем сейчас гонятся меньше
+  // всех (погоня делится поровну; при равенстве - по очереди), а лимиты считаются на банду целиком
   wantedHeads() {
     const room = this.room;
     const list = [...room.players.values()].filter(p => !p.isBot && p.alive && p.stars > 0);
     if (!room.gang || list.length < 2) return list;
+    const load = new Map(list.map(p => [p.id, 0]));
+    for (const v of room.vehicles.list.values()) if (!v.dead && v.state === 'npc' && (v.role === 'police' || v.role === 'tank') && load.has(v.target)) load.set(v.target, load.get(v.target) + 1);
+    for (const h of this.helis.values()) if (load.has(h.target)) load.set(h.target, load.get(h.target) + 1);
     this.gangTurn = ((this.gangTurn || 0) + 1) % list.length;
-    return [list[this.gangTurn]];
+    let best = list[this.gangTurn];
+    for (const p of list) if (load.get(p.id) < load.get(best.id)) best = p;
+    return [best];
   }
   // сколько техники этого вида гонится за игроком (pid 0 - за всеми); вышедший спецназ тоже в деле:
   // пока бьются хотя бы двое бойцов, новый грузовик не едет

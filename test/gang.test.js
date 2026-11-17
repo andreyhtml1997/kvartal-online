@@ -125,6 +125,20 @@ const newT = R.players.get(chase.target);
 console.log(`цель погибла: машина переключилась на ${newT && newT.alive ? newT.name : '-'} (роль ${chase.role})`);
 assert.ok(newT && newT.alive && newT !== victim && chase.role === 'police', 'погоня переключается на живого из банды');
 
+// банда из двоих: погоня делится поровну (замер 17.11.2026: очередь сдвигалась дважды за вызов - все машины к одному)
+{
+  const d = makeRoom(true);
+  d.room.npcs.crime(d.A, STAR_HEAT[4] + 1);
+  for (let i = 0; i < 12; i++) { d.room.time += 1.5; d.room.npcs.dispatchPolice(); }
+  // вся погоня: машины полиции, грузовик спецназа, вертолёт
+  const units = [...d.room.vehicles.list.values()].filter(v => !v.dead && v.state === 'npc' && (v.role === 'police' || v.role === 'tank'))
+    .map(v => v.target).concat([...d.room.npcs.helis.values()].map(h => h.target));
+  const cars = [...d.room.vehicles.list.values()].filter(v => v.kind === 'police' && v.role === 'police').length;
+  const onA = units.filter(t => t === d.A.id).length, onB = units.filter(t => t === d.B.id).length;
+  console.log(`банда из двоих на 4 звёздах: машин полиции ${cars}, всего погони ${units.length} (за первым ${onA}, за вторым ${onB})`);
+  assert.ok(cars <= 4 && onA >= 1 && onB >= 1 && Math.abs(onA - onB) <= 1, 'погоня делится поровну между двумя');
+}
+
 // все ушли из комнаты - розыск банды сброшен, вернувшийся начинает чисто
 N.crime(g.A, STAR_HEAT[2] + 1);
 for (const p of [...R.players.values()]) if (!p.isBot) R.removePlayer(p.id);
