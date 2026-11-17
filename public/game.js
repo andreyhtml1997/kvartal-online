@@ -1340,11 +1340,12 @@
         const [ox, oy] = stickOrigin(t.clientX, t.clientY);
         input.move = { id: t.identifier, ox, oy, x: t.clientX, y: t.clientY };
       } else if (!left && !input.aim) {
-        // правая сторона - атака: держишь - стреляет без остановки, короткое касание - один выстрел.
-        // В круге справа внизу - большой стик (перекрестие отводится от персонажа), в любом другом месте - пули летят под палец.
+        // Кнопка атаки справа внизу, как в Mobile Legends: коснулся или держишь - стреляет в ближайшего видимого
+        // противника; потянул палец от кнопки - стреляет туда, куда тянешь (на земле полоса прицела).
+        // Касание вне кнопки не стреляет.
         const [bx, by] = aimBase();
-        const inStick = Math.hypot(t.clientX - bx, t.clientY - by) <= AIM_R * 1.35;
-        input.aim = { id: t.identifier, mode: inStick ? 'stick' : 'point', x: t.clientX, y: t.clientY, t0: performance.now() };
+        if (Math.hypot(t.clientX - bx, t.clientY - by) > AIM_R * 1.35) continue;
+        input.aim = { id: t.identifier, mode: 'stick', x: t.clientX, y: t.clientY, t0: performance.now(), dragged: false };
         newPress();
       }
     }
@@ -1465,26 +1466,28 @@
       const w = WEAPONS[S.me.cur];
       const maxAim = w.melee ? 2.5 : Math.min(w.range || 10, S.zoomR * 0.95);
       let tx = null, ty = null;
-      if (input.aim.mode === 'stick') {
-        // большой стик: чем дальше отвёл палец, тем дальше перекрестие от персонажа
-        const [bx, by] = aimBase();
-        const dx = input.aim.x - bx, dy = input.aim.y - by, l = Math.hypot(dx, dy);
-        const n = Math.min(1, l / AIM_R);
-        if (n > 0.15) { tx = S.me.x + (dx / l) * n * maxAim; ty = S.me.y + (dy / l) * n * maxAim; }
-      } else {
-        // пули летят точно под палец
-        tx = (input.aim.x * dpr - S.view.ox) / S.view.tp;
-        ty = (input.aim.y * dpr - S.view.oy) / S.view.tp;
-      }
-      if (tx === null) {
-        const auto = autoAim();
-        if (auto) { tx = auto.x; ty = auto.y; S.aimSnap = true; }
-      } else {
+      // потянул палец от кнопки атаки - прицел туда; чем дальше, тем дальше точка (граната летит до неё)
+      const [bx, by] = aimBase();
+      const dx = input.aim.x - bx, dy = input.aim.y - by, l = Math.hypot(dx, dy);
+      const n = Math.min(1, l / AIM_R);
+      input.aim.dragged = n > 0.22;
+      S.aimTarget = null;
+      if (input.aim.dragged) {
+        tx = S.me.x + (dx / l) * n * maxAim; ty = S.me.y + (dy / l) * n * maxAim;
         const snap = snapTarget(tx, ty);
         if (snap) { tx = snap.x; ty = snap.y; S.aimSnap = true; }
+      } else {
+        // просто держит кнопку - автоприцел в ближайшего видимого противника
+        const auto = autoAim();
+        if (auto) { tx = auto.x; ty = auto.y; S.aimSnap = true; S.aimTarget = auto; }
       }
       if (tx !== null) { S.aimPt = [tx, ty]; S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x); tripAim(tk); }
-      else S.aimPt = null;
+      else {
+        // противника не видно - стреляет туда, куда смотрит (поворачивается по ходу движения)
+        S.aimPt = null;
+        if (!S.me.vehicle && (mx || my)) S.me.a += angDiff(Math.atan2(my, mx), S.me.a) * Math.min(1, dt * 10);
+        else if (S.me.vehicle && S.car) S.me.a += angDiff(S.car.a, S.me.a) * Math.min(1, dt * 6);
+      }
       input.fire = true;
     } else {
       S.aimPt = null;
@@ -2677,8 +2680,9 @@
       ctx.globalAlpha = 1;
     }
     // линия прицела: у снайперки всегда (красная), на телефоне - пока палец целится, до перекрестия
-    const touchAim = input.mode === 'touch' && input.aim && S.aimPt;
-    if (S.me.alive && (WEAPONS[S.me.cur].id === W.SNIPER || touchAim) && !(S.me.vehicle && WEAPONS[S.me.cur].melee)) {
+    if (input.mode === 'touch' && input.aim && S.me.alive) drawAimGuide(now);
+    const touchAim = false;
+    if (S.me.alive && input.mode !== 'touch' && WEAPONS[S.me.cur].id === W.SNIPER && !(S.me.vehicle && WEAPONS[S.me.cur].melee)) {
       const w = WEAPONS[S.me.cur];
       const want = touchAim ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : 40;
       const start = S.me.vehicle ? 1.2 : 0.6;
@@ -2754,7 +2758,7 @@
     if (input.mode === 'touch') {
       drawStick(input.move, cw * 0.16, ch * 0.72, 'rgba(255,255,255,');
       drawAimStick();
-      if (input.aim && S.aimPt && S.me.alive) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, input.aim.mode === 'point' ? 30 : 18);
+      if (input.aim && input.aim.dragged && S.aimPt && S.me.alive && WEAPONS[S.me.cur].grenade) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, 18);
     }
   }
 
@@ -2922,28 +2926,79 @@
     ctx.beginPath(); ctx.arc(sx, sy, 2.2 * dpr, 0, Math.PI * 2); ctx.fill();
   }
 
-  // большой правый стик справа внизу: виден всегда, ручка двигается, когда палец в нём
+  // Кнопка атаки справа внизу (как в Mobile Legends): большая круглая кнопка; потянул - ручка идёт за пальцем
   function drawAimStick() {
     const [bx, by] = aimBase();
     const R = AIM_R * dpr, cx = bx * dpr, cy = by * dpr;
-    const active = input.aim && input.aim.mode === 'stick';
-    ctx.fillStyle = active ? 'rgba(255,120,100,0.12)' : 'rgba(255,120,100,0.06)';
-    ctx.strokeStyle = active ? 'rgba(255,120,100,0.6)' : 'rgba(255,120,100,0.28)';
-    ctx.lineWidth = 2 * dpr;
-    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // засечки-подсказка «прицел»
-    ctx.beginPath();
-    ctx.moveTo(cx - R * 0.25, cy); ctx.lineTo(cx + R * 0.25, cy);
-    ctx.moveTo(cx, cy - R * 0.25); ctx.lineTo(cx, cy + R * 0.25);
-    ctx.stroke();
+    const active = !!input.aim, dragged = active && input.aim.dragged;
+    // круг, в пределах которого тянут прицел - виден, только когда тянешь
+    if (dragged) {
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
     let kx = 0, ky = 0;
-    if (active) {
+    if (dragged) {
       kx = (input.aim.x - bx) * dpr; ky = (input.aim.y - by) * dpr;
       const l = Math.hypot(kx, ky);
       if (l > R) { kx *= R / l; ky *= R / l; }
     }
-    ctx.fillStyle = active ? 'rgba(255,120,100,0.6)' : 'rgba(255,120,100,0.22)';
-    ctx.beginPath(); ctx.arc(cx + kx, cy + ky, R * 0.4, 0, Math.PI * 2); ctx.fill();
+    const r = R * (dragged ? 0.42 : 0.62);
+    const g = ctx.createRadialGradient(cx + kx, cy + ky - r * 0.3, r * 0.1, cx + kx, cy + ky, r);
+    g.addColorStop(0, active ? 'rgba(255,170,120,0.95)' : 'rgba(255,150,110,0.75)');
+    g.addColorStop(1, active ? 'rgba(200,60,40,0.95)' : 'rgba(150,40,30,0.7)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx + kx, cy + ky, r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.strokeStyle = active ? 'rgba(255,240,220,0.95)' : 'rgba(255,220,200,0.6)';
+    ctx.stroke();
+    // значок прицела на кнопке
+    const s = r * 0.45, x = cx + kx, y = cy + ky;
+    ctx.lineWidth = 2.2 * dpr;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath(); ctx.arc(x, y, s * 0.7, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - s * 1.25, y); ctx.lineTo(x - s * 0.35, y); ctx.moveTo(x + s * 0.35, y); ctx.lineTo(x + s * 1.25, y);
+    ctx.moveTo(x, y - s * 1.25); ctx.lineTo(x, y - s * 0.35); ctx.moveTo(x, y + s * 0.35); ctx.lineTo(x, y + s * 1.25);
+    ctx.stroke();
+  }
+
+  // Указатель прицела на земле: потянул кнопку - полоса до дальности оружия (у гранаты - круг взрыва),
+  // просто держишь - красное кольцо на цели автоприцела
+  function drawAimGuide(now) {
+    const w = WEAPONS[S.me.cur];
+    if (S.me.vehicle && w.melee) return;
+    if (input.aim.dragged) {
+      const a = S.me.a, c = Math.cos(a), s = Math.sin(a);
+      const start = S.me.vehicle ? 1.3 : 0.6;
+      const reach = w.grenade && S.aimPt ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, w.range || 10);
+      const hw = w.pellets > 1 ? 0.25 + Math.tan(w.spread / 2) * reach : 0.28;
+      ctx.save();
+      ctx.translate(S.me.x, S.me.y);
+      ctx.rotate(a);
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 0.05;
+      ctx.beginPath();
+      ctx.moveTo(start, -0.28); ctx.lineTo(Math.max(start, reach - 0.45), -hw); ctx.lineTo(reach, 0); ctx.lineTo(Math.max(start, reach - 0.45), hw); ctx.lineTo(start, 0.28);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+      if (w.grenade && S.aimPt) {
+        ctx.strokeStyle = 'rgba(255,120,60,0.8)';
+        ctx.lineWidth = 0.07;
+        ctx.beginPath(); ctx.arc(S.aimPt[0], S.aimPt[1], w.blast.r, 0, Math.PI * 2); ctx.stroke();
+      }
+    } else if (S.aimTarget) {
+      const t = S.aimTarget, k = 0.85 + 0.08 * Math.sin(now / 90);
+      ctx.strokeStyle = 'rgba(255,60,60,0.9)';
+      ctx.lineWidth = 0.08;
+      ctx.beginPath(); ctx.arc(t.x, t.y, k, 0, Math.PI * 2); ctx.stroke();
+      for (let i = 0; i < 4; i++) {
+        const q = i * Math.PI / 2 + now / 600;
+        ctx.beginPath(); ctx.moveTo(t.x + Math.cos(q) * (k + 0.12), t.y + Math.sin(q) * (k + 0.12)); ctx.lineTo(t.x + Math.cos(q) * (k + 0.38), t.y + Math.sin(q) * (k + 0.38)); ctx.stroke();
+      }
+    }
   }
 
   function drawStick(st, defX, defY, col) {
