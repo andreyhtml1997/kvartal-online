@@ -18,7 +18,7 @@ assert.ok(me, 'игрок добавлен');
 assert.strictEqual(ws.msgs[0].t, 'welcome');
 const welcomeBytes = JSON.stringify(ws.msgs[0]).length;
 assert.strictEqual(room.humanCount(), 1);
-assert.strictEqual(room.players.size, 4, 'боты добрали до 4');
+assert.strictEqual(room.players.size, 10, 'боты добрали до 10');
 const traffic0 = [...room.vehicles.list.values()].filter(v => v.state === 'traffic');
 assert.ok(traffic0.length >= TRAFFIC_TARGET - 2, `машины с водителями на месте (${traffic0.length})`);
 const parked0 = [...room.vehicles.list.values()].filter(v => v.state === 'parked').length;

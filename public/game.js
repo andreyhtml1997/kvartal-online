@@ -37,14 +37,14 @@
     players: new Map(), pickups: new Map(), bullets: new Map(), vehicles: new Map(),
     particles: [], effects: [], decals: [], hitMarks: [], pings: [], npcs: [], blasts: [], rammed: new Map(),
     me: {
-      x: 0, y: 0, a: 0, tp: -1, hp: 100, ar: 0, cur: 0, ammo: [0, -1, -1, -1, -1, -1], alive: false, respawnIn: 0,
+      x: 0, y: 0, a: 0, tp: -1, hp: 100, ar: 0, cur: 0, ammo: KV.emptyAmmo(), alive: false, respawnIn: 0,
       switchAt: 0, nextShot: 0, punch: 0, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprinting: false,
-      kvx: 0, kvy: 0, walk: 0, stepAcc: 0, moveAng: 0, moving: false
+      kvx: 0, kvy: 0, walk: 0, stepAcc: 0, moveAng: 0, moving: false, rollUntil: 0, rollAng: 0, saw: 0
     },
     car: null, cam: { x: 0, y: 0 }, clockOff: null, lastSend: 0, emptyAt: 0, crashAt: 0, ramAt: new Map(),
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
-    humans: [], botsOn: true, pushAcc: new Map()
+    humans: [], botsOn: true, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0
   };
 
   function makePlayer(id) {
@@ -177,7 +177,7 @@
       osc.start(t);
       osc.stop(t + o.dur + 0.05);
     }
-    let stepAlt = 0;
+    let stepAlt = 0, tripOut = null;
     return {
       init,
       get on() { return on; },
@@ -221,6 +221,55 @@
       thud(x, y) { tone({ freq: 85, dur: 0.18, gain: 0.45, x, y, slide: 50 }); burst({ dur: 0.12, freq: 400, q: 0.8, gain: 0.35, type: 'lowpass', x, y }); },
       fire(x, y) { burst({ dur: 0.6, freq: 300, q: 0.6, gain: 0.4, type: 'lowpass', sweep: 1600, x, y, attack: 0.1 }); },
       doorOpen() { burst({ dur: 0.12, freq: 900, q: 3, gain: 0.15 }); },
+      flame(x, y) { burst({ dur: 0.22, freq: 420, q: 0.5, gain: 0.3, type: 'lowpass', sweep: 1500, x, y, attack: 0.03 }); },
+      saw(x, y, cut) {
+        tone({ freq: cut ? 210 : 160, dur: 0.13, gain: 0.13, type: 'sawtooth', slide: cut ? 260 : 175, x, y });
+        if (cut) burst({ dur: 0.1, freq: 2600, q: 1.4, gain: 0.16, x, y });
+      },
+      gulp() { tone({ freq: 300, dur: 0.12, gain: 0.2, slide: 520 }); tone({ freq: 520, dur: 0.18, gain: 0.16, type: 'triangle', slide: 900, delay: 0.1 }); },
+      // музыка на фоне, пока действует гриб: бас и переливы через плавающий фильтр
+      tripMusic(sec) {
+        if (!ac || !on) return;
+        this.tripStop();
+        const t0 = ac.currentTime + 0.05, beat = 0.24;
+        const out = ac.createGain();
+        out.gain.setValueAtTime(0.0001, t0);
+        out.gain.exponentialRampToValueAtTime(0.5, t0 + 0.8);
+        out.gain.setValueAtTime(0.5, t0 + sec - 1.2);
+        out.gain.exponentialRampToValueAtTime(0.0001, t0 + sec);
+        const flt = ac.createBiquadFilter();
+        flt.type = 'lowpass'; flt.Q.value = 7; flt.frequency.value = 1100;
+        const lfo = ac.createOscillator(), lg = ac.createGain();
+        lfo.frequency.value = 0.35; lg.gain.value = 800;
+        lfo.connect(lg); lg.connect(flt.frequency);
+        flt.connect(out); out.connect(master);
+        lfo.start(t0); lfo.stop(t0 + sec + 0.1);
+        const hz = n => 440 * Math.pow(2, (n - 69) / 12);
+        const bass = [45, 45, 52, 45, 48, 45, 55, 53];
+        const lead = [69, 72, 76, 79, 77, 74, 72, 81, 79, 76, 74, 72];
+        const note = (type, f, t, d, g) => {
+          const o = ac.createOscillator(), e = ac.createGain();
+          o.type = type; o.frequency.setValueAtTime(f, t);
+          e.gain.setValueAtTime(0.0001, t);
+          e.gain.exponentialRampToValueAtTime(g, t + 0.02);
+          e.gain.exponentialRampToValueAtTime(0.0001, t + d);
+          o.connect(e); e.connect(flt);
+          o.start(t); o.stop(t + d + 0.05);
+        };
+        const steps = Math.floor(sec / beat);
+        for (let i = 0; i < steps; i++) {
+          const t = t0 + i * beat;
+          if (i % 2 === 0) note('triangle', hz(bass[(i / 2) % bass.length]), t, beat * 1.8, 0.32);
+          note('square', hz(lead[(i * 5) % lead.length] + (i % 16 >= 8 ? 2 : 0)), t, beat * 0.9, 0.07);
+          if (i % 4 === 3) note('sine', hz(lead[(i * 3) % lead.length] + 12), t + beat / 2, beat, 0.05);
+        }
+        tripOut = out;
+      },
+      tripStop() {
+        if (!ac || !tripOut) return;
+        try { tripOut.gain.cancelScheduledValues(ac.currentTime); tripOut.gain.setTargetAtTime(0.0001, ac.currentTime, 0.12); } catch (_) {}
+        tripOut = null;
+      },
       // моторы: свой и двух ближайших машин
       engines(list) {
         if (!ac) return;
@@ -653,7 +702,7 @@
 
   function drawEffects(now) {
     for (const e of S.effects) {
-      const k = (now - e.t0) / 700;
+      const k = Math.max(0, (now - e.t0) / 700); // кадр мог начаться чуть раньше, чем пришёл взрыв
       if (k >= 1) continue;
       const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * (0.4 + k));
       g.addColorStop(0, `rgba(255,255,220,${(1 - k) * 0.95})`);
@@ -784,10 +833,25 @@
     { len: 0.78, wid: 0.13, col: '#34362c' },
     { len: 0.72, wid: 0.12, col: '#5a3b22' },
     { len: 1.0, wid: 0.1, col: '#2c3a2c' },
-    { len: 0.84, wid: 0.2, col: '#4a5a3a' }];
+    { len: 0.84, wid: 0.2, col: '#4a5a3a' },
+    { len: 0.8, wid: 0.16, col: '#7a2a1c' },
+    { len: 1.0, wid: 0.18, col: '#e07a1f' }];
   function drawGunShape(g, w) {
     const s = GUN[w];
     if (!s) return;
+    if (w === W.FLAMER) {
+      g.fillStyle = '#b5321c'; g.fillRect(-0.12, -0.2, 0.3, 0.4);            // баллон
+      g.fillStyle = '#3a3a3a'; g.fillRect(0.12, -0.05, s.len - 0.12, 0.1);   // ствол
+      g.fillStyle = '#e8a33a'; g.fillRect(s.len - 0.08, -0.07, 0.08, 0.14);  // сопло
+      return;
+    }
+    if (w === W.SAW) {
+      g.fillStyle = '#e07a1f'; roundRect(g, -0.05, -0.16, 0.36, 0.32, 0.06); g.fill();          // мотор
+      g.fillStyle = '#b8bcc2'; roundRect(g, 0.28, -0.08, s.len - 0.28, 0.16, 0.08); g.fill();   // шина
+      g.fillStyle = '#4a4d52';
+      for (let i = 0.34; i < s.len - 0.05; i += 0.09) { g.fillRect(i, -0.1, 0.04, 0.03); g.fillRect(i, 0.07, 0.04, 0.03); } // цепь
+      return;
+    }
     g.fillStyle = s.col;
     g.fillRect(0, -s.wid / 2, s.len, s.wid);
     g.fillStyle = 'rgba(0,0,0,0.45)';
@@ -800,7 +864,7 @@
   // Вещь на земле: заметно светится, от неё расходятся круги
   function drawPickup(pk, t) {
     const bob = Math.sin(t * 3 + pk.id) * 0.06;
-    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : '110,180,255';
+    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : pk.kind === PK.SHROOM ? '255,90,200' : '110,180,255';
     ctx.save();
     ctx.translate(pk.x, pk.y);
     if (pk.kind !== PK.AMMO) {
@@ -831,6 +895,8 @@
     } else if (pk.kind === PK.HEALTH) {
       ctx.fillStyle = '#f5f5f5'; roundRect(ctx, -0.3, -0.26, 0.6, 0.52, 0.07); ctx.fill();
       ctx.fillStyle = '#e53935'; ctx.fillRect(-0.07, -0.19, 0.14, 0.38); ctx.fillRect(-0.19, -0.07, 0.38, 0.14);
+    } else if (pk.kind === PK.SHROOM) {
+      drawShroomIcon(ctx, 0, 0.02, 0.3);
     } else {
       ctx.fillStyle = '#2f5d8a'; roundRect(ctx, -0.26, -0.3, 0.52, 0.6, 0.1); ctx.fill();
       ctx.fillStyle = '#1d3d5c'; ctx.fillRect(-0.06, -0.3, 0.12, 0.6);
@@ -874,7 +940,8 @@
       ctx.beginPath(); ctx.arc(0.3 + ext - arm, 0.2, 0.11, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(0.28 + arm, -0.2, 0.11, 0, Math.PI * 2); ctx.fill();
     } else {
-      ctx.save(); ctx.translate(0.16, 0.06); drawGunShape(ctx, w); ctx.restore();
+      // пила в работе дрожит
+      ctx.save(); ctx.translate(0.16 + (w === W.SAW && punch > 0 ? (Math.random() - 0.5) * 0.06 : 0), 0.06); drawGunShape(ctx, w); ctx.restore();
       ctx.fillStyle = skin;
       ctx.beginPath(); ctx.arc(0.22, 0.16, 0.1, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(0.42, 0.04, 0.09, 0, Math.PI * 2); ctx.fill();
@@ -908,7 +975,18 @@
         continue;
       }
       const x = b.x0 + b.dx * d, y = b.y0 + b.dy * d;
-      if (b.w === W.LAUNCHER) {
+      if (b.w === W.FLAMER) {
+        // язык пламени: растёт и тускнеет к концу струи
+        const k = Math.min(1, d / b.range);
+        const r = 0.22 + k * 0.55;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, `rgba(255,240,170,${0.9 - k * 0.5})`);
+        g.addColorStop(0.45, `rgba(255,140,30,${0.75 - k * 0.45})`);
+        g.addColorStop(1, 'rgba(200,40,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        if (Math.random() < 0.12) spawn('smoke', x, y, 1, '#444', 0.6, 0.9, 0.25);
+      } else if (b.w === W.LAUNCHER) {
         ctx.fillStyle = '#2b2b2b';
         ctx.beginPath(); ctx.arc(x, y, 0.15, 0, Math.PI * 2); ctx.fill();
         if (Math.random() < 0.6) spawn('smoke', x, y, 1, '#888', 0.3, 0.7, 0.12);
@@ -931,6 +1009,8 @@
     } else if (kind === 4) {
       spawn('spark', x, y, 6, '#ffe6a0', 6, 0.25, 0.05);
       Sound.metal(x, y);
+    } else if (kind === 5) {
+      spawn('fire', x, y, 2, Math.random() < 0.5 ? '#ff8a1a' : '#ffc23a', 1.2, 0.5, 0.3, -Math.PI / 2, 1.5);
     } else if (kind === 0 && w !== W.LAUNCHER) {
       spawn('dust', x, y, 1, '#888', 0.3, 0.4, 0.08);
     }
@@ -953,7 +1033,7 @@
     if (typing() || !S.inGame) return;
     if (e.repeat && (e.code === 'KeyF' || e.code === 'KeyM' || e.code === 'KeyH')) return;
     input.keys.add(e.code);
-    if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)); if (n >= 1 && n <= 6) selectWeapon(n - 1); }
+    if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)); if (n >= 1 && n <= WEAPONS.length) selectWeapon(n - 1); }
     else if (e.code === 'KeyQ') cycleWeapon(-1);
     else if (e.code === 'KeyE') cycleWeapon(1);
     else if (e.code === 'KeyF') carAction();
@@ -1091,6 +1171,7 @@
   function aimBase() { return [Math.max(cw * 0.72, cw - 200), ch - Math.min(115, ch * 0.3)]; }
 
   function updateInput(dt) {
+    const tk = tripK(performance.now());
     let mx = 0, my = 0;
     const k = input.keys;
     if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1;
@@ -1108,6 +1189,11 @@
     }
     const len = Math.hypot(mx, my);
     if (len > 0) { mx /= len; my /= len; }
+    if (tk > 0 && (mx || my)) {
+      // после гриба персонажа ведёт в сторону
+      const da = Math.sin(performance.now() / 1000 * 1.3) * 0.55 * tk, c = Math.cos(da), s = Math.sin(da);
+      const nx = mx * c - my * s; my = mx * s + my * c; mx = nx;
+    }
     input.mx = mx; input.my = my;
 
     S.aimSnap = false;
@@ -1115,6 +1201,7 @@
       const tx = (input.mouseX * dpr - S.view.ox) / S.view.tp, ty = (input.mouseY * dpr - S.view.oy) / S.view.tp;
       S.aimPt = [tx, ty];
       S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x);
+      tripAim(tk);
       input.fire = input.mouseDown;
     } else if (input.aim) {
       const w = WEAPONS[S.me.cur];
@@ -1138,7 +1225,7 @@
         const snap = snapTarget(tx, ty);
         if (snap) { tx = snap.x; ty = snap.y; S.aimSnap = true; }
       }
-      if (tx !== null) { S.aimPt = [tx, ty]; S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x); }
+      if (tx !== null) { S.aimPt = [tx, ty]; S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x); tripAim(tk); }
       else S.aimPt = null;
       input.fire = true;
     } else {
@@ -1148,7 +1235,7 @@
       else if (S.me.vehicle && S.car) S.me.a += angDiff(S.car.a, S.me.a) * Math.min(1, dt * 6);
     }
     const wantSprint = k.has('ShiftLeft') || k.has('ShiftRight') || input.sprintBtn;
-    if (!wantSprint || S.me.vehicle || !(mx || my)) S.me.sprinting = false;
+    if (!wantSprint || S.me.vehicle || !(mx || my) || performance.now() < S.me.rollUntil) S.me.sprinting = false;
     else if (S.me.sprinting ? S.me.stamina > 0 : S.me.stamina >= STAMINA.START) S.me.sprinting = true;
     else S.me.sprinting = false;
   }
@@ -1241,10 +1328,12 @@
         if (S.car) { S.car.x = m.x; S.car.y = m.y; S.car.a = m.a; S.car.v = 0; S.car.sx = 0; S.car.sy = 0; S.car.tp = m.tp; }
         break;
       case 'vk':
-        if (S.car) { S.car.sx += m.x; S.car.sy += m.y; if (!a11y('motion')) S.shake = Math.max(S.shake, 0.5); }
+        // взрывная волна толкает и закручивает свою машину
+        if (S.car) { S.car.sx += m.x; S.car.sy += m.y; if (m.w) S.car.w = clamp((S.car.w || 0) + m.w, -4, 4); if (!a11y('motion')) S.shake = Math.max(S.shake, 0.5); }
         break;
       case 'kb':
         S.me.kvx += m.x; S.me.kvy += m.y;
+        if (m.roll) { S.me.rollUntil = performance.now() + KV.ROLL.TIME * 1000; S.me.rollAng = Math.atan2(m.y, m.x); S.me.sprinting = false; }
         if (!a11y('motion')) S.shake = Math.max(S.shake, 0.8);
         break;
       case 's': onSnapshot(m); break;
@@ -1274,6 +1363,8 @@
     for (const [id, kind, w, x, y] of m.pickups) S.pickups.set(id, { id, kind, w, x, y });
     S.bullets.clear(); S.vehicles.clear(); S.rammed.clear();
     S.particles.length = 0; S.effects.length = 0; S.decals.length = 0; S.hitMarks.length = 0; S.npcs.length = 0; S.blasts.length = 0; S.pings = [];
+    S.tileFires.clear();
+    endTrip();
     resetMe();
     S.clockOff = null;
     S.inGame = true;
@@ -1301,7 +1392,8 @@
     S.me.kvx = 0; S.me.kvy = 0;
     if (!m.veh && S.me.vehicle) { S.me.vehicle = 0; S.car = null; Sound.doorOpen(); }
     if (m.sp) {
-      S.me.alive = true; S.me.hp = 100; S.me.ar = 0; S.me.cur = 0; S.me.ammo = [0, -1, -1, -1, -1, -1];
+      S.me.alive = true; S.me.hp = 100; S.me.ar = 0; S.me.cur = 0; S.me.ammo = KV.emptyAmmo(); S.me.rollUntil = 0;
+      endTrip();
       S.me.stamina = STAMINA.MAX; S.me.vehicle = 0; S.car = null;
       S.cam.x = m.x; S.cam.y = m.y;
       $('deathScreen').hidden = true;
@@ -1387,8 +1479,8 @@
       const dx = Math.cos(ang), dy = Math.sin(ang);
       S.bullets.set(id, { x0: x, y0: y, dx, dy, speed: wp.speed, range: wp.range, w, t0: now, end: null, endKind: 0, ex: 0, ey: 0 });
       if (owner !== S.myId) {
-        Sound.shot(w, x, y);
-        spawn('flash', x + dx * 0.9, y + dy * 0.9, 1, '#ffcf70', 0.2, 0.06, 0.28);
+        if (w === W.FLAMER) { if (now - S.flameSndOther > 130) { S.flameSndOther = now; Sound.flame(x, y); } }
+        else { Sound.shot(w, x, y); spawn('flash', x + dx * 0.9, y + dy * 0.9, 1, '#ffcf70', 0.2, 0.06, 0.28); }
       }
     }
     if (m.be) for (const [id, x, y, kind] of m.be) {
@@ -1405,6 +1497,7 @@
     if (m.tl) for (const [k, block, st, ground, destroyed] of m.tl) {
       const x = k % map.w, y = Math.floor(k / map.w);
       map.block[k] = block; map.dmg[k] = st; map.ground[k] = ground;
+      if (!block) S.tileFires.delete(k);
       S.rammed.delete(k);
       dirtyAround(x, y);
       radarTile(k);
@@ -1431,12 +1524,23 @@
     if (m.pr) for (const id of m.pr) S.pickups.delete(id);
     if (m.pu) for (const [pid, kind, w] of m.pu) {
       if (pid !== S.myId) continue;
+      if (kind === PK.SHROOM) { Sound.gulp(); startTrip(); continue; }
       Sound.pickup();
       toast(kind === PK.WEAPON ? `Подобрано: ${WEAPONS[w].name}` : kind === PK.AMMO ? `Патроны: ${WEAPONS[w].name}` : kind === PK.HEALTH ? 'Аптечка' : 'Бронежилет');
     }
     if (m.m) for (const id of m.m) {
       const p = S.players.get(id);
-      if (p && id !== S.myId) { p.punch = 1; Sound.punch(p.rx, p.ry); }
+      if (!p) continue;
+      const mine = id === S.myId;
+      const w = mine ? S.me.cur : p.w;
+      if (w === W.SAW) {
+        // пила: искры и звук громче, если она что-то режет
+        const px = mine ? S.me.x : p.rx, py = mine ? S.me.y : p.ry, pa = mine ? S.me.a : p.ra;
+        const fx = px + Math.cos(pa) * 1.25, fy = py + Math.sin(pa) * 1.25;
+        const cut = blockAt(Math.floor(fx), Math.floor(fy)) !== B.NONE;
+        if (!mine) { p.saw = 1; Sound.saw(px, py, cut); } else if (cut) Sound.saw(undefined, undefined, true);
+        if (cut) spawn('spark', fx, fy, 3, '#ffd27a', 5, 0.25, 0.05);
+      } else if (!mine) { p.punch = 1; Sound.punch(p.rx, p.ry); }
     }
     // машины
     if (m.hn) for (const id of m.hn) { const v = S.vehicles.get(id); if (v) Sound.horn(v.rx, v.ry); else if (id === S.me.vehicle) Sound.horn(); }
@@ -1444,6 +1548,9 @@
     if (m.ck) for (const [vid, pid, x, y] of m.ck) { Sound.thud(x, y); spawn('blood', x, y, 8, '#9b0f0f', 4, 0.5, 0.12); }
     if (m.vf) for (const id of m.vf) { const v = S.vehicles.get(id); if (v) Sound.fire(v.rx, v.ry); if (id === S.me.vehicle) toast('Машина горит - выходите!', 2500); }
     if (m.vx) for (const id of m.vx) S.vehicles.delete(id);
+    // деревянное горит
+    if (m.tf) for (const k of m.tf) S.tileFires.set(k, now + 9000);
+    if (m.tfx) for (const k of m.tfx) S.tileFires.delete(k);
     if (m.fl) for (const [x, y, a] of m.fl) S.npcs.push({ x, y, a, t0: now, walk: 0, color: ['#8e44ad', '#16a085', '#d35400', '#7f8c8d'][Math.floor(Math.random() * 4)] });
     if (m.bo) for (const [on, who] of m.bo) {
       S.botsOn = !!on;
@@ -1503,7 +1610,9 @@
     '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 5h29v3h-9l-.5 6h-3.5l.5-6h-6l-3 5H4l2.5-5H1z"/></svg>',
     '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 5h30v3H12l-3 6H5l2.4-6H1zm16 3h7v3h-7z"/></svg>',
     '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 7h30v2H11l-3 5H4l2.4-5H1zm11-5h9v3h-9z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h27v7H2zm7 7h4v4H9zm20-6h2v5h-2z"/></svg>'
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h27v7H2zm7 7h4v4H9zm20-6h2v5h-2z"/></svg>',
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h7v9H2zM9 7h13v3H9zM22 6h3v5h-3z"/><path fill="#ff7a1a" d="M25 8.5c2-3.5 4.5-2.5 6-1-1.2 0-2 1-1.5 2 1 1.2-1.2 3.4-4.5 2z"/></svg>',
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h9v9H2z"/><path fill="currentColor" opacity=".7" d="M11 6h16a3 3 0 0 1 0 6H11z"/><path stroke="currentColor" stroke-width="1.3" d="M13 6V4.5M17 6V4.5M21 6V4.5M25 6V4.5M13 12v1.5M17 12v1.5M21 12v1.5M25 12v1.5"/></svg>'
   ];
   const slotEls = [];
   (function buildWeaponBar() {
@@ -1698,6 +1807,9 @@
     } else if (pk.kind === PK.ARMOR) {
       drawRings(g, x, y, s, '110,180,255', t, pk.id);
       drawArmorIcon(g, x, y, s * 0.9);
+    } else if (pk.kind === PK.SHROOM) {
+      drawRings(g, x, y, s, '255,90,200', t, pk.id);
+      drawShroomIcon(g, x, y + s * 0.1, s * 0.95);
     } else {
       g.fillStyle = '#e0b030'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1;
       g.fillRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7); g.strokeRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7);
@@ -1757,7 +1869,7 @@
         g.save();
         g.translate(ex, ey);
         g.rotate(ang);
-        g.fillStyle = pk.kind === PK.WEAPON ? '#ffd23f' : pk.kind === PK.HEALTH ? '#ff5a5a' : '#6eb4ff';
+        g.fillStyle = pk.kind === PK.WEAPON ? '#ffd23f' : pk.kind === PK.HEALTH ? '#ff5a5a' : pk.kind === PK.SHROOM ? '#ff5ac8' : '#6eb4ff';
         g.strokeStyle = 'rgba(0,0,0,0.7)';
         g.lineWidth = 1;
         g.beginPath(); g.moveTo(5 * u, 0); g.lineTo(-3 * u, 4 * u); g.lineTo(-3 * u, -4 * u); g.closePath(); g.fill(); g.stroke();
@@ -1953,7 +2065,7 @@
   function predictFire(now) {
     if (input.pressFire && now - input.pressAt > PRESS_MS) input.pressFire = false; // давнее нажатие не стреляет с опозданием
     if (!S.me.alive || !(input.fire || input.pressFire)) return;
-    if (S.me.sprinting) { input.pressFire = false; return; }
+    if (S.me.sprinting || now < S.me.rollUntil) { input.pressFire = false; return; }
     const w = WEAPONS[S.me.cur];
     if (now < S.me.nextShot) return;
     if ((w.melee && S.me.vehicle) || (w.id !== W.FISTS && !(S.me.ammo[w.id] > 0))) {
@@ -1965,9 +2077,15 @@
     S.me.nextShot = now + 1000 / w.rate;
     if (w.id === W.FISTS) { S.me.punch = 1; Sound.punch(); return; }
     S.me.ammo[w.id]--;
-    Sound.shot(w.id);
+    if (w.saw) { S.me.saw = 1; Sound.saw(); return; }
     const dx = Math.cos(S.me.a), dy = Math.sin(S.me.a);
     const off = S.me.vehicle ? 0.9 : 0.2 + GUN[w.id].len;
+    if (w.flame) {
+      if (now - S.flameSndAt > 120) { S.flameSndAt = now; Sound.flame(); }
+      spawn('fire', S.me.x + dx * off, S.me.y + dy * off, 1, '#ffb23a', 3, 0.2, 0.18, S.me.a, 0.4);
+      return;
+    }
+    Sound.shot(w.id);
     spawn('flash', S.me.x + dx * off, S.me.y + dy * off, 1, '#ffcf70', 0.2, 0.06, 0.3);
     if (!a11y('motion')) S.shake = Math.max(S.shake, w.id === W.SNIPER || w.id === W.SHOTGUN ? 0.3 : w.id === W.LAUNCHER ? 0.25 : 0.08);
   }
@@ -2061,8 +2179,10 @@
 
   function walkLocal(dt) {
     const me = S.me;
+    const rolling = performance.now() < me.rollUntil; // катится после прыжка из машины - управлять нельзя
     const sp = me.sprinting ? KV.SPRINT_SPEED : KV.PLAYER_SPEED;
-    const dx = input.mx * sp * dt + me.kvx * dt, dy = input.my * sp * dt + me.kvy * dt;
+    const imx = rolling ? 0 : input.mx, imy = rolling ? 0 : input.my;
+    const dx = imx * sp * dt + me.kvx * dt, dy = imy * sp * dt + me.kvy * dt;
     let [nx, ny] = KV.moveCircle(S.map, me.x, me.y, dx, dy, KV.PLAYER_R);
     // машины - препятствие
     for (const v of S.vehicles.values()) {
@@ -2071,18 +2191,19 @@
       if (out) [nx, ny] = KV.collideCircle(S.map, out[0], out[1], KV.PLAYER_R);
     }
     const moved = Math.hypot(nx - me.x, ny - me.y);
-    me.moving = moved > sp * dt * 0.25 && (input.mx || input.my);
-    if (input.mx || input.my) me.moveAng = Math.atan2(input.my, input.mx);
+    me.moving = moved > sp * dt * 0.25 && (imx || imy);
+    if (imx || imy) me.moveAng = Math.atan2(imy, imx);
+    if (rolling && Math.random() < dt * 14) spawn('dust', nx, ny, 1, '#9a8f84', 0.6, 0.6, 0.2);
     me.walk += moved * (me.sprinting ? 4.2 : 4.8);
     me.stepAcc += moved;
     const stride = me.sprinting ? 1.7 : 1.3;
-    if (me.stepAcc >= stride) {
+    if (me.stepAcc >= stride && !rolling) {
       me.stepAcc = 0;
       const k = tileAt(Math.floor(nx), Math.floor(ny));
       Sound.step(k >= 0 ? S.map.ground[k] : G.ROAD, undefined, undefined, me.sprinting ? 1.25 : 1);
     }
     me.x = nx; me.y = ny;
-    const f = Math.exp(-5 * dt);
+    const f = Math.exp((rolling ? -2.2 : -5) * dt);
     me.kvx *= f; me.kvy *= f;
     // выносливость
     if (me.sprinting && me.moving) {
@@ -2112,7 +2233,11 @@
     predictFire(now);
     sendInput(now);
     if (S.me.punch > 0) S.me.punch = Math.max(0, S.me.punch - dt * 5);
-    for (const p of S.players.values()) if (p.punch > 0) p.punch = Math.max(0, p.punch - dt * 5);
+    if (S.me.saw > 0) S.me.saw = Math.max(0, S.me.saw - dt * 4);
+    for (const p of S.players.values()) {
+      if (p.punch > 0) p.punch = Math.max(0, p.punch - dt * 5);
+      if (p.saw > 0) p.saw = Math.max(0, p.saw - dt * 4);
+    }
     updateParticles(dt);
     S.shake = Math.max(0, S.shake - dt * 2.5);
     S.hurtFlash = Math.max(0, S.hurtFlash - dt * 2);
@@ -2160,18 +2285,44 @@
     if (S.shake > 0) { camX += (Math.random() - 0.5) * S.shake * 0.5; camY += (Math.random() - 0.5) * S.shake * 0.5; }
     const ox = Math.round(canvas.width / 2 - camX * tp), oy = Math.round(canvas.height / 2 - camY * tp);
     S.view.tp = tp; S.view.ox = ox; S.view.oy = oy; S.view.hw = hw; S.view.hh = hh;
-    const x0 = -ox / tp, y0 = -oy / tp, x1 = (canvas.width - ox) / tp, y1 = (canvas.height - oy) / tp;
+    // гриб: кислотные цвета, мир покачивается и дышит
+    const tk = tripK(now);
+    const W0 = tk > 0 && !a11y('motion') ? tripWobble(now, tk) : null;
+    if (tk > 0) canvas.style.filter = `hue-rotate(${Math.round(now / (a11y('motion') ? 40 : 6)) % 360}deg) saturate(${(1 + 1.7 * tk).toFixed(2)}) contrast(${(1 + 0.15 * tk).toFixed(2)})`;
+    else if (canvas.style.filter) canvas.style.filter = '';
+    const pad = W0 ? 4 : 0;
+    const x0 = -ox / tp - pad, y0 = -oy / tp - pad, x1 = (canvas.width - ox) / tp + pad, y1 = (canvas.height - oy) / tp + pad;
     const inView = (x, y, w, h) => x + w > x0 - 1 && y + h > y0 - 1 && x < x1 + 1 && y < y1 + 1;
+    // мировая точка -> экран (с покачиванием от гриба)
+    const scr = (x, y) => {
+      let sx = x * tp + ox, sy = y * tp + oy;
+      if (W0) { const dx = sx - W0.cx, dy = sy - W0.cy; sx = W0.cx + dx * W0.c - dy * W0.s; sy = W0.cy + dx * W0.s + dy * W0.c; }
+      return [sx, sy];
+    };
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#0b0c0f';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(tp, 0, 0, tp, ox, oy);
+    if (W0) {
+      ctx.setTransform(W0.c, W0.s, -W0.s, W0.c, W0.cx - W0.c * W0.cx + W0.s * W0.cy, W0.cy - W0.s * W0.cx - W0.c * W0.cy);
+      ctx.transform(tp, 0, 0, tp, ox, oy);
+    } else ctx.setTransform(tp, 0, 0, tp, ox, oy);
     ctx.imageSmoothingEnabled = true;
     drawChunks(x0, y0, x1, y1, tp);
     drawDecals(now, inView);
     const tsec = now / 1000;
     for (const pk of S.pickups.values()) if (inView(pk.x - 2, pk.y - 2, 4, 4)) drawPickup(pk, tsec);
+    // горящие заборы, ящики, скамейки, деревья
+    for (const [k, until] of S.tileFires) {
+      if (now > until) { S.tileFires.delete(k); continue; }
+      const fx = k % map.w, fy = (k / map.w) | 0;
+      if (!inView(fx, fy, 1, 1)) continue;
+      const gl = ctx.createRadialGradient(fx + 0.5, fy + 0.5, 0, fx + 0.5, fy + 0.5, 1.4);
+      gl.addColorStop(0, 'rgba(255,150,40,0.35)'); gl.addColorStop(1, 'rgba(255,90,20,0)');
+      ctx.fillStyle = gl; ctx.fillRect(fx - 0.9, fy - 0.9, 2.8, 2.8);
+      if (Math.random() < 0.55) spawn('fire', fx + 0.2 + Math.random() * 0.6, fy + 0.2 + Math.random() * 0.6, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 0.8, 0.5, 0.35, -Math.PI / 2, 1);
+      if (Math.random() < 0.1) spawn('smoke', fx + 0.5, fy + 0.5, 1, '#333', 0.6, 1.6, 0.35);
+    }
 
     const rt = Date.now() + (S.clockOff || 0) - INTERP_MS;
     const tags = [];
@@ -2214,7 +2365,13 @@
       p.hidden = false;
       if (!inView(p.rx - 1, p.ry - 1, 2, 2)) continue;
       const moving = Math.hypot(p.mvx, p.mvy) > 1;
-      drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
+      const rolling = p.flags & 16;
+      if (rolling && !p.wasRolling) p.rollT0 = now;
+      p.wasRolling = rolling;
+      if (rolling) drawRoller(p.rx, p.ry, Math.atan2(p.mvy, p.mvx), p.color, (now - p.rollT0) / 1000, false);
+      else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
+      if (p.flags & 32) burnFx(p.rx, p.ry);
+      if (p.flags & 64) tripHalo(p.rx, p.ry, now);
       tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false });
     }
     for (const n of S.npcs) {
@@ -2241,9 +2398,12 @@
       ctx.strokeStyle = 'rgba(255,210,63,0.75)';
       ctx.lineWidth = 0.07;
       ctx.beginPath(); ctx.arc(S.me.x, S.me.y, 0.72, 0, Math.PI * 2); ctx.stroke();
-      drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving);
+      if (now < S.me.rollUntil) drawRoller(S.me.x, S.me.y, S.me.rollAng, mp ? mp.color : '#fff', 1 - (S.me.rollUntil - now) / (KV.ROLL.TIME * 1000), true);
+      else drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.cur === W.SAW ? S.me.saw : S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving);
+      if (mp && (mp.flags & 32)) burnFx(S.me.x, S.me.y);
       tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true });
     }
+    if (tk > 0) drawPhantoms(now, dt, tk);
     drawBullets(now);
     drawParticles(false);
     drawCanopies(x0, y0, x1, y1);
@@ -2258,7 +2418,7 @@
     ctx.font = `700 ${Math.round(13 * dpr * hud)}px system-ui, sans-serif`;
     ctx.lineJoin = 'round';
     for (const t of tags) {
-      const sx = t.x * tp + ox, sy = t.y * tp + oy;
+      const [sx, sy] = scr(t.x, t.y);
       ctx.lineWidth = 3.5 * dpr;
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.strokeText(t.name, sx, sy);
@@ -2275,7 +2435,7 @@
       const h = S.hitMarks[i];
       const k = (now - h.t0) / 280;
       if (k >= 1) { S.hitMarks.splice(i, 1); continue; }
-      const sx = h.x * tp + ox, sy = h.y * tp + oy, r = (6 + 4 * k) * dpr;
+      const [sx, sy] = scr(h.x, h.y), r = (6 + 4 * k) * dpr;
       ctx.strokeStyle = `rgba(255,255,255,${1 - k})`;
       ctx.lineWidth = 2 * dpr;
       ctx.beginPath();
@@ -2283,6 +2443,7 @@
       ctx.moveTo(sx - r, sy + r); ctx.lineTo(sx - r / 2, sy + r / 2); ctx.moveTo(sx + r, sy + r); ctx.lineTo(sx + r / 2, sy + r / 2);
       ctx.stroke();
     }
+    if (tk > 0 && !a11y('motion')) drawTripBlobs(now, tk);
     const low = S.me.alive && S.me.hp < 30 ? 0.25 + 0.15 * Math.sin(now / 200) : 0;
     const red = Math.max(S.hurtFlash * 0.45, low);
     if (red > 0.01) {
@@ -2298,6 +2459,132 @@
       drawAimStick();
       if (input.aim && S.aimPt && S.me.alive) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, input.aim.mode === 'point' ? 30 : 18);
     }
+  }
+
+  // Кувырок после прыжка из машины: тело катится по ходу движения, голова мелькает то спереди, то сзади
+  function drawRoller(x, y, ang, color, t, outline) {
+    const ph = t * Math.PI * 4.4;
+    const sq = 0.5 + 0.5 * Math.abs(Math.cos(ph));
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(1.2, 1.2);
+    ctx.rotate(ang);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(0.08, 0.1, 0.4, 0.4, 0, 0, Math.PI * 2); ctx.fill();
+    const lx = -Math.cos(ph) * 0.3;
+    ctx.fillStyle = '#3b2a1e';
+    ctx.beginPath(); ctx.ellipse(lx, -0.13, 0.12, 0.08, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(lx, 0.13, 0.12, 0.08, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.ellipse(0, 0, 0.32 * sq + 0.08, 0.36, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = outline ? 0.09 : 0.05;
+    ctx.strokeStyle = outline ? '#ffffff' : 'rgba(0,0,0,0.55)';
+    ctx.stroke();
+    ctx.fillStyle = '#2b1d14';
+    ctx.beginPath(); ctx.arc(Math.cos(ph) * 0.26, 0, 0.17 + 0.03 * Math.sin(ph), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // человек горит
+  function burnFx(x, y) {
+    if (Math.random() < 0.7) spawn('fire', x + (Math.random() - 0.5) * 0.6, y + (Math.random() - 0.5) * 0.6, 1, Math.random() < 0.5 ? '#ff7a1a' : '#ffc23a', 1.2, 0.45, 0.32, -Math.PI / 2, 1.4);
+    if (Math.random() < 0.15) spawn('smoke', x, y, 1, '#333', 0.6, 1.2, 0.3);
+  }
+
+  // радужный ореол над тем, кто съел гриб
+  function tripHalo(x, y, now) {
+    ctx.strokeStyle = `hsl(${(now / 5) % 360},100%,62%)`;
+    ctx.lineWidth = 0.08;
+    ctx.beginPath(); ctx.arc(x, y, 0.85 + 0.08 * Math.sin(now / 150), 0, Math.PI * 2); ctx.stroke();
+  }
+
+  function drawShroomIcon(g, x, y, s) {
+    g.fillStyle = '#efe4c8';
+    roundRect(g, x - s * 0.3, y - s * 0.1, s * 0.6, s, s * 0.2); g.fill();
+    g.fillStyle = '#d7263d';
+    g.beginPath(); g.ellipse(x, y - s * 0.1, s * 1.05, s * 0.75, 0, Math.PI, 0); g.closePath(); g.fill();
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(x - s * 0.5, y - s * 0.35, s * 0.17, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(x + s * 0.15, y - s * 0.6, s * 0.15, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(x + s * 0.6, y - s * 0.3, s * 0.13, 0, Math.PI * 2); g.fill();
+  }
+
+  // ---------- гриб: 10 секунд кислотных цветов, видений, музыки; прицел плавает, персонажа ведёт ----------
+  function startTrip() {
+    const now = performance.now();
+    S.trip = { t0: S.trip ? S.trip.t0 : now, until: now + KV.TRIP * 1000 };
+    Sound.tripMusic(KV.TRIP);
+    toast('Грибочек! Мир поплыл...', 2500);
+  }
+  function endTrip() {
+    if (!S.trip) return;
+    S.trip = null;
+    S.phantoms.length = 0;
+    canvas.style.filter = '';
+    Sound.tripStop();
+  }
+  // сила эффекта 0..1: плавно нарастает и плавно уходит
+  function tripK(now) {
+    const tr = S.trip;
+    if (!tr) return 0;
+    if (now >= tr.until) { endTrip(); return 0; }
+    return Math.max(0, Math.min(1, (now - tr.t0) / 700, (tr.until - now) / 1500));
+  }
+  function tripWobble(now, tk) {
+    const t = now / 1000;
+    const rot = (Math.sin(t * 0.9) * 0.045 + Math.sin(t * 2.3) * 0.012) * tk;
+    const sc = 1 + Math.sin(t * 1.6) * 0.05 * tk;
+    return { cx: canvas.width / 2, cy: canvas.height / 2, c: Math.cos(rot) * sc, s: Math.sin(rot) * sc };
+  }
+  // прицел плавает: и выстрел, и перекрестие уходят в сторону
+  function tripAim(tk) {
+    if (!(tk > 0)) return;
+    const t = performance.now() / 1000;
+    const wa = (Math.sin(t * 2.1) * 0.1 + Math.sin(t * 5.3) * 0.045) * tk;
+    S.me.a += wa;
+    if (S.aimPt) {
+      const dx = S.aimPt[0] - S.me.x, dy = S.aimPt[1] - S.me.y, c = Math.cos(wa), s = Math.sin(wa);
+      S.aimPt = [S.me.x + dx * c - dy * s, S.me.y + dx * s + dy * c];
+    }
+  }
+  // видения: несуществующие люди бродят сквозь стены, некоторые - великаны
+  function drawPhantoms(now, dt, tk) {
+    const ph = S.phantoms;
+    while (ph.length < 7) {
+      const a = Math.random() * Math.PI * 2, d = 4 + Math.random() * 7, giant = Math.random() < 0.25;
+      ph.push({ x: S.me.x + Math.cos(a) * d, y: S.me.y + Math.sin(a) * d, a: Math.random() * Math.PI * 2, v: 1 + Math.random() * 2.5,
+        t0: now, life: 2500 + Math.random() * 3000, hue: Math.random() * 360, sc: giant ? 2 + Math.random() * 1.4 : 0.7 + Math.random() * 0.6,
+        walk: 0, spin: (Math.random() - 0.5) * 2 });
+    }
+    for (let i = ph.length - 1; i >= 0; i--) {
+      const f = ph[i], age = now - f.t0;
+      if (age > f.life) { ph.splice(i, 1); continue; }
+      f.a += f.spin * dt * 0.5;
+      f.x += Math.cos(f.a) * f.v * dt; f.y += Math.sin(f.a) * f.v * dt;
+      f.walk += f.v * dt * 4.8;
+      const fade = Math.max(0, Math.min(1, age / 500, (f.life - age) / 600));
+      ctx.save();
+      ctx.globalAlpha = 0.55 * fade * tk;
+      ctx.translate(f.x, f.y); ctx.scale(f.sc, f.sc); ctx.translate(-f.x, -f.y);
+      drawPlayer(f.x, f.y, f.a, `hsl(${(f.hue + now / 8) % 360},100%,60%)`, W.FISTS, 0, 0, false, f.walk, f.a, true);
+      ctx.restore();
+    }
+  }
+  // яркие пятна плывут по экрану
+  function drawTripBlobs(now, tk) {
+    const t = now / 1000;
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 5; i++) {
+      const bx = canvas.width * (0.5 + 0.42 * Math.sin(t * (0.3 + i * 0.07) + i * 1.7));
+      const by = canvas.height * (0.5 + 0.4 * Math.cos(t * (0.23 + i * 0.05) + i * 2.3));
+      const r = Math.min(canvas.width, canvas.height) * (0.18 + 0.08 * Math.sin(t * 0.7 + i));
+      const g = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      g.addColorStop(0, `hsla(${(t * 90 + i * 72) % 360},100%,60%,${0.32 * tk})`);
+      g.addColorStop(1, 'hsla(0,0%,0%,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(bx - r, by - r, r * 2, r * 2);
+    }
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   // перекрестие прицела на экране; в режиме «под палец» крупнее, чтобы было видно вокруг пальца

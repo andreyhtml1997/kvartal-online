@@ -122,7 +122,7 @@ class Bots {
     const ax = t.x + ai.tvx * lead, ay = t.y + ai.tvy * lead;
     // разброс вдвое больше прежнего: боты заметно мажут
     ai.aimJ = (ai.aimJ + (Math.random() - 0.5) * 0.32) * 0.92;
-    const err = 0.12 + Math.min(0.28, d * 0.012);
+    const err = 0.12 + Math.min(0.28, d * 0.012) + (p.tripUntil > this.room.time ? 0.25 : 0); // после гриба мажет сильнее
     p.a = Math.atan2(ay - p.y, ax - p.x) + ai.aimJ + (Math.random() - 0.5) * err * 2;
   }
 
@@ -140,6 +140,15 @@ class Bots {
     const room = this.room;
     const ai = p.ai || this.initAi(p);
     if (!p.alive) { p.fire = false; ai.path = null; ai.target = null; ai.carGoal = 0; return; }
+    // катится после прыжка из машины на ходу
+    if (room.time < p.rollUntil) {
+      const [rx, ry] = KV.moveCircle(room.map, p.x, p.y, p.rollVx * dt, p.rollVy * dt, KV.PLAYER_R);
+      p.x = rx; p.y = ry;
+      const f = Math.exp(-2.2 * dt);
+      p.rollVx *= f; p.rollVy *= f;
+      p.fire = false;
+      return;
+    }
     ai.think -= dt;
     if (ai.think <= 0) { ai.think = 0.22 + Math.random() * 0.12; this.think(p, ai); }
     if (p.vehicle) return;
@@ -158,7 +167,7 @@ class Bots {
     let mx = 0, my = 0;
     if (t && t.alive) {
       const dx = t.x - p.x, dy = t.y - p.y, d = Math.hypot(dx, dy) || 1;
-      const want = WEAPONS[p.cur].melee ? 0.7 : p.cur === W.SHOTGUN ? 4 : p.cur === W.SNIPER ? 14 : p.cur === W.LAUNCHER ? 9 : 7;
+      const want = WEAPONS[p.cur].melee ? 0.7 : p.cur === W.SHOTGUN ? 4 : p.cur === W.FLAMER ? 3.5 : p.cur === W.SNIPER ? 14 : p.cur === W.LAUNCHER ? 9 : 7;
       const ux = dx / d, uy = dy / d;
       const fwd = d > want + 1.5 ? 1 : d < want - 1.5 ? -0.7 : 0;
       ai.strafeT -= dt;
@@ -251,7 +260,7 @@ class Bots {
 
     if (ai.path && ai.pi < ai.path.length && now < ai.repath) return;
     let gx, gy;
-    const strong = p.ammo[W.RIFLE] > 0 || p.ammo[W.SHOTGUN] > 0 || p.ammo[W.SNIPER] > 0 || p.ammo[W.LAUNCHER] > 0;
+    const strong = p.ammo[W.RIFLE] > 0 || p.ammo[W.SHOTGUN] > 0 || p.ammo[W.SNIPER] > 0 || p.ammo[W.LAUNCHER] > 0 || p.ammo[W.FLAMER] > 0 || p.ammo[W.SAW] > 0;
     const pk = this.nearestUseful(p, !strong);
     let prey = null;
     if (strong) {
@@ -355,7 +364,7 @@ class Bots {
     // стрельба из окна
     if (p.cur === W.FISTS) this.pickWeapon(p, bd);
     p.fire = false;
-    if (los && bd < 14 && p.cur !== W.FISTS && p.ammo[p.cur] > 0) {
+    if (los && bd < 14 && !WEAPONS[p.cur].melee && p.ammo[p.cur] > 0) {
       this.aimAt(p, ai, target, bd);
       p.fire = this.canShoot(ai, now);
     }
@@ -365,9 +374,11 @@ class Bots {
   pickWeapon(p, d) {
     const has = w => w === W.FISTS || p.ammo[w] > 0;
     let order;
-    if (d < 3.5) order = [W.SHOTGUN, W.RIFLE, W.PISTOL, W.SNIPER, W.FISTS];
-    else if (d > 11 && d < 99) order = [W.SNIPER, W.RIFLE, W.LAUNCHER, W.PISTOL, W.SHOTGUN, W.FISTS];
-    else order = [W.LAUNCHER, W.RIFLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FISTS];
+    if (p.vehicle) order = [W.RIFLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.FISTS]; // из окна - только стреляющее
+    else if (d < 2.2) order = [W.SAW, W.SHOTGUN, W.FLAMER, W.RIFLE, W.PISTOL, W.SNIPER, W.FISTS];
+    else if (d < 5.5) order = [W.FLAMER, W.SHOTGUN, W.RIFLE, W.PISTOL, W.SAW, W.SNIPER, W.FISTS];
+    else if (d > 11 && d < 99) order = [W.SNIPER, W.RIFLE, W.LAUNCHER, W.PISTOL, W.SHOTGUN, W.FLAMER, W.SAW, W.FISTS];
+    else order = [W.LAUNCHER, W.RIFLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.SAW, W.FISTS];
     for (const w of order) if (has(w)) { p.cur = w; return; }
   }
 
@@ -378,6 +389,7 @@ class Bots {
       if (pk.kind === PK.WEAPON) useful = !(p.ammo[pk.w] >= WEAPONS[pk.w].max);
       else if (pk.kind === PK.AMMO) useful = p.ammo[pk.w] >= 0 && p.ammo[pk.w] < WEAPONS[pk.w].max;
       else if (pk.kind === PK.HEALTH) useful = p.hp < 70;
+      else if (pk.kind === PK.SHROOM) useful = false;
       else useful = p.ar < 50;
       if (!useful) continue;
       const d = Math.hypot(pk.x - p.x, pk.y - p.y);

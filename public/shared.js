@@ -40,7 +40,7 @@
   BLOCKS[B.CAR] = { name: 'машина', hp: 110, bullet: 0.7, blast: 0.8, explode: { r: 4, dmg: 95, tile: 320 }, rubble: G.BURNT };
   BLOCKS[B.BENCH] = { name: 'скамейка', hp: 24, bullet: 1, blast: 1, low: true };
 
-  const W = { FISTS: 0, PISTOL: 1, RIFLE: 2, SHOTGUN: 3, SNIPER: 4, LAUNCHER: 5 };
+  const W = { FISTS: 0, PISTOL: 1, RIFLE: 2, SHOTGUN: 3, SNIPER: 4, LAUNCHER: 5, FLAMER: 6, SAW: 7 };
   // rate - выстрелов в секунду; speed - м/с; spread - разброс, рад; range - дальность, м;
   // pick - патронов в подобранном оружии; box - в коробке патронов; max - сколько можно носить
   const WEAPONS = [
@@ -49,16 +49,24 @@
     { id: 2, name: 'Автомат', dmg: 14, rate: 10, speed: 60, spread: 0.07, pellets: 1, range: 36, pick: 60, box: 90, max: 270 },
     { id: 3, name: 'Дробовик', dmg: 11, rate: 1.1, speed: 44, spread: 0.3, pellets: 8, range: 14, pick: 10, box: 16, max: 48 },
     { id: 4, name: 'Снайперка', dmg: 95, rate: 0.7, speed: 150, spread: 0, pellets: 1, range: 75, pick: 6, box: 10, max: 30, zoom: 1.7 },
-    { id: 5, name: 'Гранатомёт', grenade: true, rate: 0.8, speed: 24, spread: 0.01, pellets: 1, range: 28, blast: { r: 3.6, dmg: 110, tile: 560 }, pick: 4, box: 6, max: 16 }
+    { id: 5, name: 'Гранатомёт', grenade: true, rate: 0.8, speed: 24, spread: 0.01, pellets: 1, range: 28, blast: { r: 3.6, dmg: 110, tile: 560 }, pick: 4, box: 6, max: 16 },
+    // огнемёт: короткая струя проходит сквозь людей и поджигает их (burn - сколько секунд горит), деревянное сгорает, машины загораются
+    { id: 6, name: 'Огнемёт', flame: true, dmg: 5, rate: 14, speed: 14, spread: 0.12, pellets: 1, range: 6.5, burn: 3, pick: 120, box: 150, max: 300 },
+    // бензопила: держишь - пилит в упор; режет любые стены (кроме границы карты) и машины; патроны - бензин
+    { id: 7, name: 'Бензопила', melee: true, saw: true, dmg: 14, rate: 9, range: 1.5, tileDmg: 75, carDmg: 30, pick: 150, box: 150, max: 300 }
   ];
   // Что и как часто появляется на карте
-  const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12]];
-  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3 };
+  const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12], [W.FLAMER, 11], [W.SAW, 11]];
+  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4 };
+  const TRIP = 10;                          // с: сколько действует съеденный гриб
+  const ROLL = { SPEED: 7.5, TIME: 1.0 };  // выпрыгнул из машины быстрее SPEED м/с - катится по дороге TIME секунд
+  // пустой набор оружия: кулаки есть всегда, остального нет (-1)
+  const emptyAmmo = () => WEAPONS.map((w, i) => (i === 0 ? 0 : -1));
 
   // ---------- машины ----------
   // HL/HW - половина длины/ширины, MAX - м/с вперёд, REV - назад, ACCEL/BRAKE - м/с², ROLL - накат без газа,
   // DRAG - сопротивление, STEER - рад/с на скорости, HP - прочность, FIRE - сколько секунд горит до взрыва
-  const CAR = { HL: 2.0, HW: 0.95, MAX: 15, REV: 5, ACCEL: 9, BRAKE: 22, ROLL: 3, DRAG: 0.3, STEER: 2.7, HP: 220, FIRE: 4, ENTER: 1.7 };
+  const CAR = { HL: 2.0, HW: 0.95, MAX: 21, REV: 7, ACCEL: 14, BRAKE: 26, ROLL: 3, DRAG: 0.3, STEER: 3.0, HP: 220, FIRE: 4, ENTER: 1.7 };
   const CAR_BLAST = { r: 4, dmg: 95, tile: 320 };
   // Лёгкие препятствия, которые машина на скорости проламывает
   const RAMMABLE = [];
@@ -431,7 +439,7 @@
 
   return {
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
-    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
+    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
     obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     applyImpulse, carContactPoint, carCollide,

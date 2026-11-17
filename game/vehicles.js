@@ -11,10 +11,10 @@
 const KV = require('../public/shared.js');
 const { CAR, CAR_BLAST } = KV;
 
-const TRAFFIC_TARGET = 10;
-const TRAFFIC_SPEED = 9.5;
+const TRAFFIC_TARGET = 14;
+const TRAFFIC_SPEED = 12;
 const KNOCK = 4;             // м/с: удар сильнее - водитель-NPC выскакивает, машину отбрасывает
-const PARKED_RESPAWN = 120;   // с - через сколько на месте взорванной машины с парковки появится новая
+const PARKED_RESPAWN = 60;    // с - через сколько на месте взорванной машины с парковки появится новая
 const EXTRA_VEHICLES = 14;   // сколько машин сверх припаркованных и машин с водителями (брошенные и т.п.)
 const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;
@@ -317,14 +317,40 @@ class Vehicles {
 
   damage(v, amount, attackerId) {
     if (v.dead || !(amount > 0)) return;
-    v.hp -= amount;
     if (attackerId) v.lastAttacker = attackerId;
-    if (v.hp <= 0 && v.burn <= 0) {
-      v.hp = 0;
-      v.burn = CAR.FIRE;
-      if (v.state === 'traffic') this.npcFlee(v);
-      this.room.ev.vf.push(v.id);
+    // горящую машину пули добивают: каждое попадание приближает взрыв
+    if (v.burn > 0) { v.burn = Math.max(0.05, v.burn - amount / 40); return; }
+    v.hp -= amount;
+    if (v.hp <= 0) this.ignite(v, 0);
+  }
+
+  // Машина загорается (сразу от ракеты или когда кончилась прочность) и через CAR.FIRE секунд взрывается
+  ignite(v, attackerId) {
+    if (v.dead || v.burn > 0) return;
+    if (attackerId) v.lastAttacker = attackerId;
+    v.hp = 0;
+    v.burn = CAR.FIRE;
+    if (v.state === 'traffic') this.npcFlee(v);
+    this.room.ev.vf.push(v.id);
+  }
+
+  // Взрывная волна толкает машину от центра взрыва и закручивает, если пришлась не по центру
+  blastPush(v, x, y, s) {
+    if (v.dead || s < 0.4) return;
+    let nx = v.x - x, ny = v.y - y;
+    const l = Math.hypot(nx, ny) || 1;
+    nx /= l; ny /= l;
+    const jx = nx * s, jy = ny * s;
+    const cp = KV.carContactPoint(v, x, y);
+    if (v.state === 'human') {
+      // машину игрока двигает его браузер - отправляем ему толчок
+      const d = this.room.players.get(v.driver);
+      const spin = Math.max(-4, Math.min(4, (((cp[0] - v.x) * jy - (cp[1] - v.y) * jx) / 1.65) * 0.6));
+      if (d) this.room.send(d, { t: 'vk', x: r2(jx), y: r2(jy), w: r2(spin) });
+      return;
     }
+    if (v.state === 'traffic') { if (s < 2) return; this.npcFlee(v); }
+    KV.applyImpulse(v, jx, jy, cp[0], cp[1]);
   }
 
   // Водитель-NPC выскакивает и убегает (рисует браузер)
@@ -350,6 +376,7 @@ class Vehicles {
     this.remove(v);
     room.ev.vx.push(v.id);
     room.explode(v.x, v.y, CAR_BLAST, v.lastAttacker, -1);
+    room.carLoot(v.x, v.y, v.lastAttacker);
     if (v.spawn) this.respawnQueue.push({ at: room.time + PARKED_RESPAWN, sp: v.spawn });
   }
 
@@ -357,17 +384,20 @@ class Vehicles {
   checkHits(v) {
     const room = this.room;
     const c = Math.cos(v.a), s = Math.sin(v.a);
-    const vx = c * v.v + v.sx, vy = s * v.v + v.sy;
+    // у машины игрока скорость вместе с заносом присылает его браузер
+    const vx = v.state === 'human' ? v.hvx || c * v.v : c * v.v + v.sx;
+    const vy = v.state === 'human' ? v.hvy || s * v.v : s * v.v + v.sy;
     const speed = Math.hypot(vx, vy);
     for (const p of room.players.values()) {
       if (!p.alive || p.vehicle) continue;
       if (Math.abs(p.x - v.x) > 3.2 || Math.abs(p.y - v.y) > 3.2) continue;
-      const out = KV.pushOutOBB(p.x, p.y, KV.PLAYER_R, v.x, v.y, v.a, CAR.HL, CAR.HW);
+      const out = KV.pushOutOBB(p.x, p.y, KV.PLAYER_R + 0.08, v.x, v.y, v.a, CAR.HL, CAR.HW);
       if (!out) continue;
-      if (speed > 2.5) {
-        if (room.time - (v.hitCd.get(p.id) || -10) < 0.7) continue;
+      if (speed > 1.2) {
+        if (room.time - (v.hitCd.get(p.id) || -10) < 0.6) continue;
         v.hitCd.set(p.id, room.time);
-        const dmg = Math.min(90, Math.max(12, speed * 6));
+        // машина есть машина: бьёт сильно уже на малой скорости, бронежилет почти не спасает
+        const dmg = Math.min(150, 25 + speed * 9);
         let kx = out[0] - v.x, ky = out[1] - v.y;
         const kl = Math.hypot(kx, ky) || 1;
         kx = (kx / kl) * 0.6 + (vx / speed) * 0.6;
@@ -385,7 +415,7 @@ class Vehicles {
         }
         // брошенная на ходу машина засчитывает сбитого тому, кто из неё выпрыгнул
         const credit = v.driver || (room.time - (v.exitAt || -99) < 6 ? v.lastDriver : 0);
-        room.damage(p, dmg, credit, -2, p.x, p.y);
+        room.damage(p, dmg, credit, -2, p.x, p.y, 0.2);
         if (v.state !== 'human') v.v *= 0.8;
       } else if (p.isBot) {
         const q = KV.collideCircle(this.map, out[0], out[1], KV.PLAYER_R);
@@ -455,16 +485,19 @@ class Vehicles {
     v.hitCd.set(p.id, room.time); // своя же машина не сбивает выпрыгнувшего сразу
     room.ev.ex.push([v.id, p.id]);
     room.teleport(p, spot[0], spot[1]);
-    // выпрыгнул на ходу - немного протаскивает по инерции, машина катится дальше сама
+    // выпрыгнул на ходу: на большой скорости катится по дороге следом за машиной около секунды, потом встаёт
     const speed = Math.abs(v.v);
     if (speed > 4 && p.alive) {
-      const kx = c * v.v * 0.45, ky = s * v.v * 0.45;
+      const roll = speed > KV.ROLL.SPEED;
+      const k = roll ? Math.min(8, speed * 0.6) / speed : 0.45;
+      const kx = c * v.v * k, ky = s * v.v * k;
+      if (roll) p.rollUntil = room.time + KV.ROLL.TIME;
       if (p.isBot) {
-        const q = KV.moveCircle(this.map, p.x, p.y, kx * 0.25, ky * 0.25, KV.PLAYER_R);
-        p.x = q[0]; p.y = q[1];
+        if (roll) { p.rollVx = kx; p.rollVy = ky; }
+        else { const q = KV.moveCircle(this.map, p.x, p.y, kx * 0.25, ky * 0.25, KV.PLAYER_R); p.x = q[0]; p.y = q[1]; }
       } else {
-        p.budget += Math.hypot(kx, ky) * 0.5 + 1;
-        room.send(p, { t: 'kb', x: r2(kx), y: r2(ky) });
+        p.budget += Math.hypot(kx, ky) * (roll ? 1 : 0.5) + 1;
+        room.send(p, { t: 'kb', x: r2(kx), y: r2(ky), roll: roll ? 1 : 0 });
       }
     }
     return true;

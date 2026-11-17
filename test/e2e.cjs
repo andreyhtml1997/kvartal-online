@@ -37,7 +37,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const names = await pc.evaluate(() => [...window.__kv.S.players.values()].map(p => p.name));
     log('игроки у компьютера:', names.join(', '));
     check(names.includes('Богдан'), 'компьютер видит телефон в списке игроков');
-    check(names.filter(n => n.includes('(бот)')).length === 2, 'боты добрали комнату до 4');
+    check(names.filter(n => n.includes('(бот)')).length === 8, 'боты добрали комнату до 10');
 
     // ---- ходьба с клавиатуры, сервер принимает позицию ----
     const before = await pc.evaluate(() => ({ x: window.__kv.S.me.x, y: window.__kv.S.me.y, tp: window.__kv.S.me.tp }));
@@ -67,12 +67,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(pa.tp === pb.tp, 'сервер не откатывал телефон');
 
     // ---- правый джойстик: прицел и выстрел (кулаком) ----
-    const punchesBefore = await ph.evaluate(() => window.__kv.S.me.nextShot);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 700, y: 290, id: 2 }] });
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 750, y: 290, id: 2 }] });
-    await sleep(500);
-    const aim = await ph.evaluate(() => ({ a: window.__kv.S.me.a, fire: window.__kv.input.fire, next: window.__kv.S.me.nextShot }));
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    // в комнате 10 персонажей: если телефон успели убить боты - ждём возрождения и пробуем снова
+    let aim = null, punchesBefore = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await ph.waitForFunction(() => window.__kv.S.me.alive, null, { timeout: 8000 }).catch(() => {});
+      punchesBefore = await ph.evaluate(() => window.__kv.S.me.nextShot);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 700, y: 290, id: 2 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 750, y: 290, id: 2 }] });
+      await sleep(500);
+      aim = await ph.evaluate(() => ({ a: window.__kv.S.me.a, fire: window.__kv.input.fire, next: window.__kv.S.me.nextShot, alive: window.__kv.S.me.alive }));
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      if (aim.alive) break;
+      log('телефон погиб во время проверки прицела - повтор');
+    }
     check(Math.abs(aim.a) < 0.3, `правый джойстик целится вправо (угол ${aim.a.toFixed(2)})`);
     check(aim.fire && aim.next > punchesBefore, 'правый джойстик стреляет (удар кулаком)');
 
@@ -80,7 +87,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await pc.keyboard.down('Tab'); await sleep(200);
     check(await pc.isVisible('#board'), 'Tab открывает таблицу счёта');
     const rows = await pc.$$eval('#boardBody tr', r => r.length);
-    check(rows === 4, `в таблице 4 игрока (${rows})`);
+    check(rows === 10, `в таблице 10 игроков (${rows})`);
     await pc.keyboard.up('Tab');
 
     // ---- радар слева вверху, машины рядом ----
@@ -111,7 +118,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(await pc.isVisible('#menu'), 'кнопка «Выход» возвращает в меню');
     await sleep(1500);
     const left = await ph.evaluate(() => [...window.__kv.S.players.values()].map(p => p.name));
-    check(!left.includes('Андрей') && left.filter(n => n.includes('(бот)')).length === 3, 'после выхода игрока бот занял место');
+    check(!left.includes('Андрей') && left.filter(n => n.includes('(бот)')).length === 9, 'после выхода игрока бот занял место');
   } catch (e) {
     ok = false;
     console.log('FAIL исключение:', e.message);
