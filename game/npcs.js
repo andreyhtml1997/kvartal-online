@@ -942,9 +942,11 @@ class Npcs {
     } else {
       // высадка: над целью зависает и спускает троих по лестнице - раз в 45 с, пока его бойцы не перебиты
       if (!h.drop && now >= (h.dropAt || 0) && Math.hypot(t.x - h.x, t.y - h.y) < 12 && this.heliSquad(h) < 2) {
-        h.dropAt = now + HELI_DROP_EVERY;
-        const spot = this.ropeSpot(h.x + ROPE_DX, h.y + ROPE_DY);
-        if (spot) h.drop = { x: spot[0], y: spot[1], left: HELI_DROP, next: now + 1.2 };
+        // место под лестницей, а если вертолёт сейчас над домом - рядом с игроком; не нашлось - снова через 1.5 с
+        // (17.11.2026: попытка над крышей откладывала высадку на все 45 с)
+        const spot = this.ropeSpot(h.x + ROPE_DX, h.y + ROPE_DY) || this.ropeSpot(t.x, t.y);
+        if (spot) { h.drop = { x: spot[0], y: spot[1], left: HELI_DROP, next: now + 1.2 }; h.dropAt = now + HELI_DROP_EVERY; }
+        else h.dropAt = now + 1.5;
       }
       if (h.drop) { gx = h.drop.x - ROPE_DX; gy = h.drop.y - ROPE_DY; this.ropeStep(h, t, now); }
       else {

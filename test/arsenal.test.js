@@ -1,5 +1,5 @@
 'use strict';
-/* Новое оружие 17.11.2026: миниган (раскрутка 0.5 с, потом 20 пуль в секунду), автодробовик (3 веера в секунду),
+/* Новое оружие 17.11.2026: миниган (раскрутка 0.25 с, потом 24 пули в секунду, поднял - 1000 патронов), автодробовик (3 веера в секунду),
    «тройка» (3 дробины, вдвое дальше дробовика), узи, гранаты (летят в точку прицела, отскакивают от стен, взрываются
    через 2 с), щит (спереди пули не проходят, атака - из пистолета; ботам не нужен, падает при смерти);
    розыск за полицию и скорую - строже. */
@@ -27,15 +27,16 @@ R.spawnShot = (x, y, a, w, owner, ...rest) => { if (owner === me.id) shots.push(
 const tick = sec => { for (let i = 0; i < Math.round(sec / DT); i++) { R.time += DT; R.updateFiring(me); R.updateBullets(); R.updateGrenades(); R.updatePending(); } };
 const arm = (w, n) => { me.ammo[w] = n === undefined ? WEAPONS[w].max : n; me.cur = w; me.nextShot = 0; me.spinT = 0; shots.length = 0; };
 
-// 1. миниган: полсекунды раскручивается, потом ~20 пуль в секунду
+// 1. миниган: четверть секунды раскручивается, потом ~24 пули в секунду; запас - 1000, поднятый даёт сразу 1000
 arm(W.MINIGUN); me.fire = true;
-tick(0.45);
+tick(0.2);
 const early = shots.length;
 tick(1.05);
 me.fire = false;
 const mini = shots.length - early;
-console.log(`миниган: за первые 0.45 с ${early} пуль, за следующую секунду ${mini}`);
-assert.ok(early === 0 && mini >= 17 && mini <= 22, 'миниган раскручивается и строчит');
+console.log(`миниган: за первые 0.2 с ${early} пуль, за следующую секунду ${mini}; поднял - ${WEAPONS[W.MINIGUN].pick} патронов из ${WEAPONS[W.MINIGUN].max}`);
+assert.ok(early === 0 && mini >= 21 && mini <= 26, 'миниган раскручивается за четверть секунды и строчит ~24 пули в секунду');
+assert.ok(WEAPONS[W.MINIGUN].pick === 1000 && WEAPONS[W.MINIGUN].max === 1000, 'поднятый миниган - сразу 1000 патронов');
 
 // 2. автодробовик: 3 веера по 7 дробин в секунду; узи - 14 пуль в секунду
 arm(W.AUTOSHOT); me.fire = true; tick(1.0); me.fire = false;

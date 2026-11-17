@@ -78,7 +78,8 @@ class Vehicles {
   tankRam(v, impact, credit) {
     if (v.kind !== 'tank' || !(impact > 2)) return;
     const m = this.map, c = Math.cos(v.a), s = Math.sin(v.a);
-    const dmg = KV.BLOCKS[KV.B.BRICK].hp * 0.3 * Math.min(1, impact / 7);
+    // полная сила - от 5.5 м/с: танк стал медленнее (7 м/с), а кирпич по-прежнему держит ~4 тарана
+    const dmg = KV.BLOCKS[KV.B.BRICK].hp * 0.3 * Math.min(1, impact / 5.5);
     for (let ty = Math.floor(v.y - 2.8); ty <= Math.floor(v.y + 2.8); ty++) {
       for (let tx = Math.floor(v.x - 2.8); tx <= Math.floor(v.x + 2.8); tx++) {
         if (tx < 0 || ty < 0 || tx >= m.w || ty >= m.h || m.block[ty * m.w + tx] !== KV.B.BRICK) continue;
