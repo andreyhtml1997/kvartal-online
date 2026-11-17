@@ -125,4 +125,11 @@ const newT = R.players.get(chase.target);
 console.log(`цель погибла: машина переключилась на ${newT && newT.alive ? newT.name : '-'} (роль ${chase.role})`);
 assert.ok(newT && newT.alive && newT !== victim && chase.role === 'police', 'погоня переключается на живого из банды');
 
+// все ушли из комнаты - розыск банды сброшен, вернувшийся начинает чисто
+N.crime(g.A, STAR_HEAT[2] + 1);
+for (const p of [...R.players.values()]) if (!p.isBot) R.removePlayer(p.id);
+const back = R.addHuman(new FakeWs(), 'Вернулся');
+console.log(`все ушли и один вернулся: звёзд ${back.stars}`);
+assert.strictEqual(back.stars, 0, 'банда разошлась - розыск сброшен');
+
 console.log('gang: OK');

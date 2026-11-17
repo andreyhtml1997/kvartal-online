@@ -143,7 +143,10 @@ class Room {
     }
     this.players.delete(id);
     this.ev.pl.push(id);
-    if (!p.isBot && this.humanCount() === 0) this.emptySince = Date.now();
+    if (!p.isBot && this.humanCount() === 0) {
+      this.emptySince = Date.now();
+      if (this.gang) this.npcs.setGang(0, 0); // банда разошлась - розыск не дожидается вернувшихся
+    }
     if (!fromFill) this.fillBots();
     this.sbDirty = true;
   }
