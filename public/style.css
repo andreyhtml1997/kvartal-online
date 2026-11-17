@@ -136,6 +136,11 @@ input[type="text"] {
   font: 700 calc(16px * var(--hud))/1 var(--font-head); }
 .stars i { font-style: normal; color: rgba(255, 255, 255, 0.22); }
 .stars i.on { color: #ffd23f; text-shadow: 0 0 6px rgba(255, 210, 63, 0.8); }
+/* деньги: зелёные, вспыхивают, когда прибавилось */
+.money { align-self: flex-end; padding: 1px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line);
+  color: #7dff9a; font-weight: 800; white-space: nowrap; }
+.money.up { animation: moneyUp 0.9s ease-out; }
+@keyframes moneyUp { 0% { transform: scale(1.35); color: #ffffff; } 100% { transform: scale(1); color: #7dff9a; } }
 .stars.flash i.on { animation: starflash 0.5s steps(2) 6; }
 @keyframes starflash { 50% { color: #4da3ff; text-shadow: 0 0 8px #4da3ff; } }
 /* под шестерёнкой: голосовой чат и микрофон */

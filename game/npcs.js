@@ -423,8 +423,15 @@ class Npcs {
     const k = killerId > 0 ? room.players.get(killerId) : null;
     if (k && !k.isBot) {
       if (LAW.has(n.kind)) k.copKills = (k.copKills || 0) + 1; else k.civKills = (k.civKills || 0) + 1;
+      // деньги: полицейский $50, спецназ и армия $80
+      if (n.kind === K.COP) k.money = (k.money || 0) + 50;
+      else if (n.kind === K.SWAT || n.kind === K.ARMY) k.money = (k.money || 0) + 80;
       room.sbDirty = true;
       this.crime(k, LAW.has(n.kind) || n.kind === K.MEDIC ? 80 : 25);
+    }
+    // у прохожих (и футболистов) бывают с собой деньги: в половине случаев выпадает пачка $5-60
+    if ((n.kind === K.CIV || n.kind === K.FOOT || n.kind === K.COACH) && Math.random() < 0.5) {
+      room.addPickup(KV.PK.MONEY, 0, n.x + rnd(-0.4, 0.4), n.y + rnd(-0.4, 0.4), 5 + Math.floor(Math.random() * 56));
     }
     if (n.team) this.teamPanic(n.x, n.y);
     this.noise(n.x, n.y, 12);
@@ -1008,7 +1015,7 @@ class Npcs {
     if (h.hp > 0) return;
     h.state = 'fall'; h.fallT = 0; h.killer = by; h.burst = 0;
     this.room.ev.hf.push(h.id);
-    if (att && !att.isBot) { att.copKills = (att.copKills || 0) + 1; this.room.sbDirty = true; this.crime(att, 60); }
+    if (att && !att.isBot) { att.copKills = (att.copKills || 0) + 1; att.money = (att.money || 0) + 300; this.room.sbDirty = true; this.crime(att, 60); }
   }
   // вертолёты рядом с игроком: [номер, x, y, курс, прочность %, флаги: 1 падает, 2 улетает, 4 стреляет, кого ловит]
   heliSnap(p, vw, vh) {

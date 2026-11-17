@@ -11,7 +11,7 @@
 const KV = require('../public/shared.js');
 const { CAR, CAR_BLAST } = KV;
 
-const TRAFFIC_TARGET = 14;
+const TRAFFIC_TARGET = 18;          // машин с водителями (на карте 160 м - больше дорог; было 14 на 128 м)
 const TRAFFIC_SPEED = 12;
 const KNOCK = 4;             // м/с: удар сильнее - водитель-NPC выскакивает, машину отбрасывает
 const CRASH_K = 15 / 21;     // машины стали быстрее (21 м/с вместо 15) - урон от аварий уменьшен, чтобы прочность осталась прежней

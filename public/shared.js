@@ -6,8 +6,8 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const MAP_W = 128;            // метров (1 клетка = 1 м)
-  const MAP_H = 128;
+  const MAP_W = 160;            // метров (1 клетка = 1 м); 17.11.2026 карта стала больше: 128 -> 160, кварталов 5x5 вместо 4x4
+  const MAP_H = 160;
   const PLAYER_R = 0.42;        // радиус игрока, м
   const PLAYER_SPEED = 8;       // м/с, обычный бег
   const SPRINT_SPEED = 11.5;    // м/с, рывок
@@ -72,7 +72,10 @@
   // Что и как часто появляется на карте
   const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12], [W.FLAMER, 11], [W.SAW, 11],
     [W.UZI, 18], [W.AUTOSHOT, 12], [W.TRIPLE, 12], [W.GRENADE, 14], [W.SHIELD, 8], [W.MINIGUN, 4]];
-  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4, STAR: 5 }; // STAR - звезда погашения розыска
+  const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4, STAR: 5, MONEY: 6 }; // STAR - звезда погашения розыска, MONEY - пачка денег
+  // цены у кругов-чекпоинтов: больница - здоровье до 100, оружейный - случайное оружие с полным запасом,
+  // автомастерская - перекраска, полный ремонт и снятие всех звёзд розыска (решения владельца 17.11.2026)
+  const SHOP_PRICE = { med: 50, gun: 100, fix: 1000 };
   const TRIP = 10;                          // с: сколько действует съеденный гриб
   const ROLL = { SPEED: 7.5, TIME: 1.0 };  // выпрыгнул из машины быстрее SPEED м/с - катится по дороге TIME секунд
   // пустой набор оружия: кулаки есть всегда, остального нет (-1)
@@ -476,7 +479,7 @@
 
   return {
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
-    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, VEH, RAMMABLE, CRUSHABLE, RAM_SPEED,
+    G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, SHOP_PRICE, TRIP, ROLL, emptyAmmo, CAR, CAR_BLAST, VEH, RAMMABLE, CRUSHABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
     obbTileMTV, obbObbMTV, pushOutOBB, pushOutSafe, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     applyImpulse, carContactPoint, carCollide,

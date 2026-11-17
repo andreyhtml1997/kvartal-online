@@ -308,6 +308,7 @@
       glass(x, y) { if (sample('glass', { x, y, gain: 0.6 })) return; burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
       wood(x, y) { burst({ dur: 0.18, freq: 700, q: 1.5, gain: 0.35, x, y }); },
       toss(x, y) { burst({ dur: 0.22, freq: 900, q: 1.2, gain: 0.25, x, y, sweep: 300 }); }, // бросок гранаты
+      cash() { tone({ freq: 1320, dur: 0.07, gain: 0.12, type: 'square' }); tone({ freq: 1760, dur: 0.14, gain: 0.12, type: 'square', delay: 0.07 }); }, // касса
       // дом чинится: глухой стук кирпича, у стекла - звонкий; не чаще 7 раз в секунду
       place(x, y, glass) {
         const t = performance.now();
@@ -958,6 +959,45 @@
     }
   }
 
+  // Круги-чекпоинты: цвет, подпись с ценой, значок (крест, пистолет, гаечный ключ)
+  const SHOP_COL = { med: '255,90,90', gun: '255,210,63', fix: '90,170,255' };
+  const SHOP_LABEL = { med: `Больница $${KV.SHOP_PRICE.med}`, gun: `Оружие $${KV.SHOP_PRICE.gun}`, fix: `Мастерская $${KV.SHOP_PRICE.fix}` };
+  function drawShopIcon(g, k, x, y, s) {
+    g.save(); g.translate(x, y);
+    if (k === 'med') {
+      g.fillStyle = '#ffffff'; g.fillRect(-s * 0.7, -s * 0.7, s * 1.4, s * 1.4);
+      g.fillStyle = '#e53935'; g.fillRect(-s * 0.18, -s * 0.55, s * 0.36, s * 1.1); g.fillRect(-s * 0.55, -s * 0.18, s * 1.1, s * 0.36);
+    } else if (k === 'gun') {
+      g.fillStyle = '#1b1b1b';
+      g.fillRect(-s * 0.7, -s * 0.35, s * 1.4, s * 0.38); g.fillRect(-s * 0.55, 0, s * 0.38, s * 0.7);
+    } else {
+      // гаечный ключ
+      g.rotate(-0.7);
+      g.fillStyle = '#ffffff'; g.fillRect(-s * 0.12, -s * 0.2, s * 0.24, s * 1.0);
+      g.beginPath(); g.arc(0, -s * 0.4, s * 0.36, 0, Math.PI * 2); g.fill();
+      g.fillStyle = `rgb(${SHOP_COL.fix})`; g.fillRect(-s * 0.1, -s * 0.85, s * 0.2, s * 0.42);
+    }
+    g.restore();
+  }
+  // пачка денег
+  function drawMoneyIcon(g, x, y, s) {
+    g.save(); g.translate(x, y);
+    g.fillStyle = '#2e7d32'; g.fillRect(-s, -s * 0.45, s * 2, s * 1.1);
+    g.fillStyle = '#66bb6a'; g.fillRect(-s * 0.85, -s * 0.65, s * 2, s * 1.1);
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = s * 0.08; g.strokeRect(-s * 0.85, -s * 0.65, s * 2, s * 1.1);
+    g.fillStyle = '#1b5e20'; g.font = `800 ${s * 0.95}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('$', s * 0.15, -s * 0.08);
+    g.restore();
+  }
+  // деньги справа вверху: вспыхивают, когда прибавилось
+  function syncMoney(up) {
+    const el = $('money');
+    if (!el) return;
+    el.hidden = !S.inGame;
+    el.textContent = '$ ' + S.money;
+    if (up) { el.classList.remove('up'); void el.offsetWidth; el.classList.add('up'); }
+  }
+
   // Танк: гусеницы с бегущими траками, оливковый корпус, круглая башня с длинным стволом (поворачивается отдельно)
   function drawTank(x, y, a, st, fl, mine, now, tur, trk) {
     ctx.save();
@@ -1254,7 +1294,7 @@
   // Вещь на земле: заметно светится, от неё расходятся круги
   function drawPickup(pk, t) {
     const bob = Math.sin(t * 3 + pk.id) * 0.06;
-    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : pk.kind === PK.SHROOM ? '255,90,200' : pk.kind === PK.STAR ? '90,170,255' : '110,180,255';
+    const col = pk.kind === PK.WEAPON ? '255,210,63' : pk.kind === PK.AMMO ? '230,180,50' : pk.kind === PK.HEALTH ? '255,80,80' : pk.kind === PK.SHROOM ? '255,90,200' : pk.kind === PK.STAR ? '90,170,255' : pk.kind === PK.MONEY ? '110,230,120' : '110,180,255';
     ctx.save();
     ctx.translate(pk.x, pk.y);
     if (pk.kind !== PK.AMMO) {
@@ -1293,6 +1333,8 @@
       drawShroomIcon(ctx, 0, 0.02, 0.3);
     } else if (pk.kind === PK.STAR) {
       drawStarIcon(ctx, 0, 0, 0.36, t);
+    } else if (pk.kind === PK.MONEY) {
+      drawMoneyIcon(ctx, 0, 0, 0.32);
     } else {
       ctx.fillStyle = '#2f5d8a'; roundRect(ctx, -0.26, -0.3, 0.52, 0.6, 0.1); ctx.fill();
       ctx.fillStyle = '#1d3d5c'; ctx.fillRect(-0.06, -0.3, 0.12, 0.6);
@@ -1922,7 +1964,7 @@
       Voice.stop(true);
       S.ws = null;
       if (S.leaving) return;
-      if (S.inGame) { $('lost').hidden = false; return; }
+      if (S.inGame) { reconnectSoon(S.restarting ? 'update' : 'lost'); return; }
       if (!welcomed && S.retries < 20) {
         S.retries++;
         setStatus(`Сервер просыпается, пробуем ещё раз (${S.retries})...`);
@@ -1932,9 +1974,24 @@
     ws.onerror = () => {};
   }
 
+  // Связь оборвалась или замерла (например, сервер обновляется): сами переподключаемся в ту же комнату.
+  // Табличка «Связь потеряна» - только если 30 попыток подряд не помогли.
+  function reconnectSoon(why) {
+    if (S.leaving || !S.inGame) return;
+    const old = S.ws;
+    S.ws = null;
+    if (old) { try { old.close(); } catch (_) {} }
+    Voice.stop(true);
+    S.reconnects = (S.reconnects || 0) + 1;
+    if (S.reconnects > 30) { $('lost').hidden = false; return; }
+    if (S.reconnects === 1) toast(why === 'update' ? 'Сервер обновляется - переподключаемся...' : 'Связь прервалась - переподключаемся...', 4000);
+    setTimeout(() => { if (!S.leaving && S.inGame && !S.ws) connect(); }, S.reconnects === 1 ? 1500 : 2500);
+  }
+
   function handle(m) {
     switch (m.t) {
       case 'welcome': onWelcome(m); break;
+      case 'bye': S.restarting = true; toast('Сервер обновляется - сейчас переподключимся', 3500); break;
       case 'err': S.leaving = true; setStatus(m.text); if (S.ws) S.ws.close(); break;
       case 'tp': onTeleport(m); break;
       case 'car': {
@@ -1950,6 +2007,15 @@
         updateHud(true);
         break;
       }
+      case 'shop':
+        // круги: больница, оружейный, автомастерская
+        if (m.need) toast(`Нужно $${m.need}`, 1800);
+        else if (m.full) toast('Здоровье и так полное', 1500);
+        else if (m.k === 'med') { Sound.cash(); toast(`Больница: здоровье 100 (-$${m.ok})`, 2200); }
+        else if (m.k === 'gun') { Sound.cash(); toast(`Оружейный: ${WEAPONS[m.w].name} (-$${m.ok})`, 2400); }
+        else { Sound.cash(); toast(`Мастерская: перекрашено, починено, розыск снят (-$${m.ok})`, 3000); }
+        updateHud(true);
+        break;
       case 'loot':
         // полицейская машина и грузовик спецназа: ствол заряжен, броня прибавилась
         Sound.pickup();
@@ -1986,6 +2052,8 @@
     S.myId = m.id;
     S.room = m.room;
     S.map = setupMap(m.map);
+    S.shops = m.map.shops || [];
+    S.money = 0; syncMoney(false);
     chunks.clear();
     buildRadarBase();
     S.players.clear();
@@ -1997,12 +2065,14 @@
     S.tileFires.clear();
     S.peds.clear(); S.police = []; S.ambs = []; S.stars = 0; syncStars(false);
     S.helis.clear(); S.tanks = []; S.helisMM = []; S.grenades.clear();
+    setTimeout(() => syncMoney(false), 0);
     endTrip();
     resetMe();
     S.clockOff = null;
     S.inGame = true;
     S.inGameSince = performance.now();
     S.retries = 0;
+    S.reconnects = 0; S.restarting = false; S.lastSnapAt = performance.now();
     $('menu').hidden = true;
     $('hud').hidden = false;
     $('lost').hidden = true;
@@ -2035,6 +2105,7 @@
   }
 
   function onSnapshot(m) {
+    S.lastSnapAt = performance.now();
     const now = Date.now();
     const off = m.ts - now;
     if (S.clockOff === null) S.clockOff = off;
@@ -2093,7 +2164,8 @@
       if (!g) { g = { id, rx: x, ry: y }; S.grenades.set(id, g); }
       g.tx = x; g.ty = y; g.blink = blink; g.seen = now;
     }
-    const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh, stars] = m.me;
+    const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh, stars, money] = m.me;
+    if ((money || 0) !== S.money) { const up = (money || 0) - S.money; S.money = money || 0; syncMoney(up > 0 ? up : 0); }
     if ((stars || 0) !== S.stars) {
       if ((stars || 0) > S.stars) {
         const who = ['', '', '', ' - едет спецназ!', ' - летит вертолёт!', ' - армия и танки!'][stars] || '';
@@ -2208,8 +2280,9 @@
     if (m.k) for (const [killer, victim, w] of m.k) onKill(killer, victim, w);
     if (m.pa) for (const [id, kind, w, x, y] of m.pa) { S.pickups.set(id, { id, kind, w, x, y }); S.paCount = (S.paCount || 0) + 1; }
     if (m.pr) for (const id of m.pr) S.pickups.delete(id);
-    if (m.pu) for (const [pid, kind, w] of m.pu) {
+    if (m.pu) for (const [pid, kind, w, amount] of m.pu) {
       if (pid !== S.myId) continue;
+      if (kind === PK.MONEY) { Sound.cash(); toast(`+$${amount}`, 1200); continue; }
       if (kind === PK.SHROOM) { Sound.gulp(); startTrip(); continue; }
       if (kind === PK.STAR) { Sound.pickup(); toast('Минус одна звезда розыска', 2000); continue; }
       Sound.pickup();
@@ -2552,6 +2625,8 @@
     } else if (pk.kind === PK.STAR) {
       drawRings(g, x, y, s, '90,170,255', t, pk.id);
       drawStarIcon(g, x, y, s * 1.1, t);
+    } else if (pk.kind === PK.MONEY) {
+      drawMoneyIcon(g, x, y, s * 0.8);
     } else {
       g.fillStyle = '#e0b030'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1;
       g.fillRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7); g.strokeRect(x - s * 0.45, y - s * 0.35, s * 0.9, s * 0.7);
@@ -2602,7 +2677,7 @@
       const px = toX(pk.x), py = toY(pk.y);
       const inside = px >= 0 && py >= 0 && px <= size && py <= size;
       if (inside) drawPickupIcon(g, pk, px, py, (pk.kind === PK.AMMO ? 4 : 6) * u, tsec);
-      else if (!full && pk.kind !== PK.AMMO) {
+      else if (!full && pk.kind !== PK.AMMO && pk.kind !== PK.MONEY) {
         const dx = pk.x - cx, dy = pk.y - cy, d = Math.hypot(dx, dy);
         if (d > 70) continue;
         const ang = Math.atan2(dy, dx);
@@ -2641,6 +2716,14 @@
       g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1;
       g.fillRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u); g.strokeRect(sx - 4 * u, sy - 4 * u, 8 * u, 8 * u);
       g.fillStyle = '#e53935'; g.fillRect(sx - 1 * u, sy - 3 * u, 2 * u, 6 * u); g.fillRect(sx - 3 * u, sy - 1 * u, 6 * u, 2 * u);
+    }
+    // больница, оружейный магазин, автомастерские - всегда на радаре
+    for (const [k, x, y] of S.shops || []) {
+      const sx = toX(x), sy = toY(y);
+      if (sx < -6 || sy < -6 || sx > size + 6 || sy > size + 6) continue;
+      g.fillStyle = `rgb(${SHOP_COL[k]})`; g.strokeStyle = 'rgba(0,0,0,0.75)'; g.lineWidth = 1;
+      g.beginPath(); g.arc(sx, sy, 4.5 * u, 0, Math.PI * 2); g.fill(); g.stroke();
+      drawShopIcon(g, k, sx, sy, 2.6 * u);
     }
     // танки (оливковый квадрат с башней) и полицейские вертолёты (крутится винт); за краем радара - стрелка
     const edgeArrow = (px, py, col) => {
@@ -3058,6 +3141,8 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
     }
+    // снимки идут 15 раз в секунду: 4 с тишины - связь замерла (так бывает при выкладке), переподключаемся
+    if (S.ws && S.ws.readyState === 1 && S.lastSnapAt && now - S.lastSnapAt > 4000) reconnectSoon('lost');
     updateInput(dt);
     if (S.me.alive) {
       if (S.me.vehicle && S.car) driveLocal(dt, now); else walkLocal(dt);
@@ -3207,6 +3292,17 @@
 
     const rt = Date.now() + (S.clockOff || 0) - INTERP_MS;
     const tags = [];
+    // круги-чекпоинты: больница, оружейный магазин, автомастерская - с подписью и ценой
+    for (const [k, x, y, r] of S.shops || []) {
+      if (!inView(x - 5, y - 5, 10, 10)) continue;
+      const col = SHOP_COL[k], pulse = 0.5 + 0.5 * Math.sin(now / 300);
+      ctx.fillStyle = `rgba(${col},${0.12 + 0.08 * pulse})`;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = `rgba(${col},${0.6 + 0.3 * pulse})`; ctx.lineWidth = 0.1; ctx.setLineDash([0.4, 0.25]);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      drawShopIcon(ctx, k, x, y, Math.min(0.75, r * 0.45));
+      tags.push({ name: SHOP_LABEL[k], bot: true, x, y: y - r - 0.25, hp: 100, me: false, col: `rgb(${col})` });
+    }
     // машины
     for (const [id, v] of S.vehicles) {
       if (Date.now() - v.seen > 1000) { S.vehicles.delete(id); continue; }
@@ -3341,7 +3437,7 @@
       ctx.lineWidth = 3.5 * dpr;
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.strokeText(t.name, sx, sy);
-      ctx.fillStyle = t.me ? '#ffd23f' : t.bot ? '#d6dbe3' : '#ffffff';
+      ctx.fillStyle = t.col || (t.me ? '#ffd23f' : t.bot ? '#d6dbe3' : '#ffffff');
       ctx.fillText(t.name, sx, sy);
       if (t.talk) drawSpeaker(sx - ctx.measureText(t.name).width / 2 - 11 * dpr * hud, sy - 7 * dpr * hud, dpr * hud, now);
       if (t.hp < 100) {

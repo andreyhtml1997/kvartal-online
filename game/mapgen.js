@@ -36,6 +36,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   const carMask = new Uint8Array(N);          // место под припаркованной машиной (машины - отдельные объекты, не клетки)
   const buildings = [];
   const carSpawns = [];
+  const shops = [];                           // круги-чекпоинты: больница, оружейный магазин, автомастерские
 
   const I = (x, y) => y * W + x;
   const inside = (x, y) => x > 0 && y > 0 && x < W - 1 && y < H - 1;
@@ -203,6 +204,46 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
     furnish(b);
   }
 
+  // ---------- особые кварталы: больница, оружейный магазин, автомастерская ----------
+  // круг перед зданием: вокруг него ничего не ставить
+  function shopSpot(kind, cx, cy, r) {
+    shops.push({ kind, x: cx, y: cy, r });
+    for (let j = Math.floor(cy - 2); j <= Math.floor(cy + 2); j++) for (let i = Math.floor(cx - 2); i <= Math.floor(cx + 2); i++) if (inside(i, j)) keep[I(i, j)] = 1;
+  }
+  // Больница: большое здание в глубине квартала, перед ним двор и круг (здоровье до 100 за деньги)
+  function blockHospital(x, y, w, h) {
+    fillG(x, y, w, h, G.LOT);
+    const bw = Math.min(w - 2, 16), bh = Math.max(7, Math.min(h - 8, 11));
+    const bx = x + Math.floor((w - bw) / 2), by = y + h - bh;
+    placeBuilding(bx, by, bw, bh);
+    buildings[buildings.length - 1].kind = 'hospital';
+    shopSpot('med', bx + bw / 2, y + 2.5, 1.3);
+  }
+  // Оружейный магазин: дом поменьше, перед ним круг (случайное оружие за деньги)
+  function blockGunshop(x, y, w, h) {
+    fillG(x, y, w, h, G.LOT);
+    const bw = Math.min(w - 4, 11), bh = Math.max(7, Math.min(h - 8, 8));
+    const bx = x + Math.floor((w - bw) / 2), by = y + h - bh;
+    placeBuilding(bx, by, bw, bh);
+    buildings[buildings.length - 1].kind = 'gunshop';
+    shopSpot('gun', bx + bw / 2, y + 2.5, 1.3);
+  }
+  // Автомастерская: бетонный бокс, открытый к дороге сверху; заехал и постоял - перекраска, ремонт, розыск снят
+  function blockGarage(x, y, w, h) {
+    fillG(x, y, w, h, G.LOT);
+    const gw = 9, gd = 9, gx = x + Math.floor((w - gw) / 2), gy = y;
+    for (let j = gy; j < gy + gd; j++) {
+      for (let i = gx; i < gx + gw; i++) {
+        const wall = i === gx || i === gx + gw - 1 || j === gy + gd - 1;
+        block[I(i, j)] = wall ? B.CONCRETE : B.NONE;
+        if (!wall) { ground[I(i, j)] = G.FLOOR; keep[I(i, j)] = 1; }
+      }
+    }
+    // въезд с улицы: от дороги через тротуар до бокса ничего не ставить
+    for (let j = y - 2; j < gy; j++) for (let i = gx + 1; i < gx + gw - 1; i++) keep[I(i, j)] = 1;
+    shops.push({ kind: 'fix', x: gx + gw / 2, y: gy + (gd - 1) / 2, r: 2.4 });
+  }
+
   // ---------- типы кварталов ----------
   function yardDecor(x, y, w, h) {
     for (let k = 0; k < Math.max(1, Math.floor((w * h) / 18)); k++) {
@@ -345,13 +386,31 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   const cityBlocks = [];
   const parkWalk = new Uint8Array(N);   // тротуар вокруг парка: без деревьев и бочек - беговая дорожка
   const forcedPark = ri(0, ax.blocks.length * ay.blocks.length - 1);
+  // особые кварталы (не там, где обязательный парк): больница, оружейный магазин, две автомастерские
+  const special = new Map();
+  shuffle([...Array(ax.blocks.length * ay.blocks.length).keys()].filter(i => i !== forcedPark))
+    .slice(0, 4).forEach((idx, i) => special.set(idx, ['hospital', 'gunshop', 'garage', 'garage'][i]));
+  const kinds = [];
+  for (let idx = 0; idx < ax.blocks.length * ay.blocks.length; idx++) {
+    const r = rng();
+    kinds.push(special.get(idx) || (idx === forcedPark ? 'park' : r < 0.52 ? 'buildings' : r < 0.68 ? 'park' : r < 0.84 ? 'parking' : 'yard'));
+  }
+  // жилых кварталов не меньше трети: иначе редкая карта выходит почти без домов (17.11.2026: 2 жилых квартала из 25)
+  let houses = kinds.filter(k => k === 'buildings').length;
+  for (const idx of shuffle([...kinds.keys()].filter(i => i !== forcedPark && (kinds[i] === 'park' || kinds[i] === 'parking' || kinds[i] === 'yard')))) {
+    if (houses >= Math.ceil(kinds.length / 3)) break;
+    kinds[idx] = 'buildings';
+    houses++;
+  }
   ax.blocks.forEach(([bx, bw], i) => {
     ay.blocks.forEach(([by, bh], j) => {
       fillG(bx, by, bw, bh, G.WALK); // тротуар 2 клетки по краю квартала
       const ix = bx + 2, iy = by + 2, iw = bw - 4, ih = bh - 4;
-      const r = rng();
-      const kind = cityBlocks.length === forcedPark ? 'park' : r < 0.52 ? 'buildings' : r < 0.68 ? 'park' : r < 0.84 ? 'parking' : 'yard';
-      if (kind === 'buildings') blockBuildings(ix, iy, iw, ih);
+      const kind = kinds[cityBlocks.length];
+      if (kind === 'hospital') blockHospital(ix, iy, iw, ih);
+      else if (kind === 'gunshop') blockGunshop(ix, iy, iw, ih);
+      else if (kind === 'garage') blockGarage(ix, iy, iw, ih);
+      else if (kind === 'buildings') blockBuildings(ix, iy, iw, ih);
       else if (kind === 'park') blockPark(ix, iy, iw, ih);
       else if (kind === 'parking') blockParking(ix, iy, iw, ih);
       else blockYard(ix, iy, iw, ih);
@@ -438,7 +497,7 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
 
   return {
     seed, w: W, h: H, ground, block, hp, dmg: new Uint8Array(N), owner, keep,
-    buildings, carSpawns, crates, roads: { x: ax.roads, y: ay.roads }, reach, blocks: cityBlocks,
+    buildings, carSpawns, crates, roads: { x: ax.roads, y: ay.roads }, reach, blocks: cityBlocks, shops,
     spawnTiles: Int32Array.from(spawnTiles), pickupTiles: Int32Array.from(pickupTiles)
   };
 }

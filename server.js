@@ -119,6 +119,23 @@ const heartbeat = setInterval(() => {
 }, 20000);
 wss.on('close', () => clearInterval(heartbeat));
 
+// Выкладка новой версии: хостинг шлёт SIGTERM. Предупреждаем игроков и закрываем соединения как «сервер перезапускается» -
+// браузеры сами переподключатся к новой версии в ту же комнату (17.11.2026: при выкладке у игрока всё молча исчезало с экрана)
+let closing = false;
+function shutdown() {
+  if (closing) return;
+  closing = true;
+  const bye = JSON.stringify({ t: 'bye', why: 'update' });
+  for (const ws of wss.clients) { try { ws.send(bye); } catch (_) {} }
+  setTimeout(() => {
+    for (const ws of wss.clients) { try { ws.close(1012, 'restart'); } catch (_) {} }
+    server.close();
+    setTimeout(() => process.exit(0), 300);
+  }, 400);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
 // Игровой цикл: фиксированный шаг, при задержке догоняем не больше 4 тактов за раз
 const TICK_MS = 1000 / KV.TICK_RATE;
 let last = process.hrtime.bigint();

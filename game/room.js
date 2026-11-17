@@ -23,6 +23,7 @@ const HELI_BULLET = 1;          // пули по вертолёту - доля �
 const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
 const BURN_DMG = 6;             // урон горящему игроку за 0.25 с (огнемёт вдвое сильнее - 17.11.2026; было 3)
 const MED_EVERY = [20, 28];     // с: отдельные аптечки сверх обычных припасов - аптечек вдвое больше (17.11.2026)
+const SHOP_TIME = { med: 1.5, gun: 1.5, fix: 2 }; // с: сколько постоять на круге, чтобы купить
 const GRENADE_DRAG = 2.2;       // 1/с: брошенная граната тормозит и за ~2 с долетает до точки прицела
 const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
 const REBUILD_EVERY = 9;        // тактов между кирпичами одного дома (0.3 с)
@@ -105,7 +106,8 @@ class Room {
       kills: 0, deaths: 0, prot: 0, tp: 0, budget: 0, lastMoveTime: 0, shotAt: -10,
       view: [24, 16], ai: null, vehicle: 0, stamina: STAMINA.MAX, staminaT: 0, sprint: false, hornAt: -10,
       rollUntil: 0, rollVx: 0, rollVy: 0, burnUntil: 0, burnBy: 0, burnT: 0, tripUntil: 0,
-      voice: false, talkUntil: 0, vWin: 0, vCount: 0, heat: 0, stars: 0, civKills: 0, copKills: 0
+      voice: false, talkUntil: 0, vWin: 0, vCount: 0, heat: 0, stars: 0, civKills: 0, copKills: 0,
+      money: 0, shopAt: -1, shopT: 0, shopDone: false
     };
     this.players.set(p.id, p);
     return p;
@@ -214,7 +216,8 @@ class Room {
       map: {
         w: m.w, h: m.h, g: KV.rleEncode(m.ground), b: KV.rleEncode(m.block), d,
         bld: m.buildings.map(b => [b.x, b.y, b.w, b.h, b.roof ? 1 : 0]),
-        roads: m.roads
+        roads: m.roads,
+        shops: (m.shops || []).map(s => [s.kind, r2(s.x), r2(s.y), s.r])
       },
       players: [...this.players.values()].map(o => this.publicInfo(o)),
       pickups: [...this.pickups.values()].map(pk => [pk.id, pk.kind, pk.w, r2(pk.x), r2(pk.y)]),
@@ -404,6 +407,7 @@ class Room {
     this.updatePending();
     if (this.tickNo % REBUILD_EVERY === 0) this.updateRebuild();
     this.updatePickups();
+    if (this.tickNo % 3 === 0) this.updateShops();
     this.updateCrates();
     for (const p of this.players.values()) if (!p.alive && this.time >= p.respawnAt) this.spawn(p);
     if (this.recentShots.length && this.time - this.recentShots[0].t > 5) this.recentShots = this.recentShots.filter(s => this.time - s.t <= 5);
@@ -780,9 +784,12 @@ class Room {
     t.respawnAt = this.time + KV.RESPAWN_DELAY;
     const a = this.players.get(attackerId);
     if (a && a !== t) a.kills++;
+    if (a && a !== t && !a.isBot) a.money = (a.money || 0) + (t.isBot ? 50 : 100); // за игрока $100, за бота $50
     this.ev.k.push([attackerId || 0, t.id, weaponId]);
     if (t.cur !== W.FISTS && t.ammo[t.cur] > 0) this.addPickup(PK.WEAPON, t.cur, t.x, t.y, t.ammo[t.cur]);
     else if (WEAPONS[t.cur].noAmmo && t.ammo[t.cur] >= 0) this.addPickup(PK.WEAPON, t.cur, t.x, t.y, 0); // щит падает на землю
+    // половина денег погибшего падает пачкой - подобрать может кто угодно
+    if (!t.isBot && t.money >= 2) { const half = Math.floor(t.money / 2); t.money -= half; this.addPickup(PK.MONEY, 0, t.x + 0.6, t.y, half); }
     this.sbDirty = true;
   }
 
@@ -1151,6 +1158,9 @@ class Room {
     } else if (pk.kind === PK.STAR) {
       if (!(p.stars > 0) || p.isBot) return false; // без розыска звезда лежит дальше
       this.npcs.starPicked(p);
+    } else if (pk.kind === PK.MONEY) {
+      if (p.isBot) return false; // ботам деньги ни к чему
+      p.money = (p.money || 0) + (pk.amount || 0);
     } else if (pk.kind === PK.HEALTH) {
       if (p.hp >= KV.MAX_HP) return false;
       p.hp = Math.min(KV.MAX_HP, p.hp + (pk.amount || 50));
@@ -1158,8 +1168,49 @@ class Room {
       if (p.ar >= KV.MAX_ARMOR) return false;
       p.ar = Math.min(KV.MAX_ARMOR, p.ar + (pk.amount || 50));
     }
-    this.ev.pu.push([p.id, pk.kind, pk.w]);
+    this.ev.pu.push([p.id, pk.kind, pk.w, pk.kind === PK.MONEY ? pk.amount : 0]);
     return true;
+  }
+
+  // Круги-чекпоинты: больница и оружейный - пешком, автомастерская - на машине. Постоял - покупка, если хватает денег;
+  // чтобы купить ещё раз, надо сойти с круга и встать снова.
+  updateShops() {
+    const shops = this.map.shops || [];
+    for (const p of this.players.values()) {
+      if (p.isBot || !p.alive) continue;
+      let at = -1;
+      for (let i = 0; i < shops.length; i++) {
+        const s = shops[i];
+        if ((s.kind === 'fix') !== !!p.vehicle || Math.hypot(p.x - s.x, p.y - s.y) > s.r) continue;
+        at = i; break;
+      }
+      if (at !== p.shopAt) { p.shopAt = at; p.shopT = 0; p.shopDone = false; continue; }
+      if (at < 0 || p.shopDone) continue;
+      p.shopT += 3 * DT;
+      if (p.shopT >= SHOP_TIME[shops[at].kind]) { p.shopDone = true; this.buy(p, shops[at]); }
+    }
+  }
+  buy(p, s) {
+    const price = KV.SHOP_PRICE[s.kind];
+    if ((p.money || 0) < price) { this.send(p, { t: 'shop', k: s.kind, need: price }); return; }
+    let w = 0;
+    if (s.kind === 'med') {
+      if (p.hp >= KV.MAX_HP) { this.send(p, { t: 'shop', k: s.kind, full: 1 }); return; }
+      p.hp = KV.MAX_HP;
+    } else if (s.kind === 'gun') {
+      w = this.randomWeapon();
+      if (WEAPONS[w].noAmmo) p.ammo[w] = Math.max(0, p.ammo[w]); else p.ammo[w] = WEAPONS[w].max;
+      p.cur = w; p.spinT = 0;
+    } else {
+      // автомастерская: новый цвет, полный ремонт (и пожар потушен), все звёзды розыска сняты - погоня уезжает
+      const v = this.vehicles.list.get(p.vehicle);
+      if (!v) return;
+      v.color = (v.color + 1 + Math.floor(Math.random() * 7)) % 8;
+      v.hp = v.maxHp || CAR.HP; v.burn = 0;
+      if (p.stars) { p.stars = 0; p.heat = 0; this.ev.ws.push([p.id, 0]); }
+    }
+    p.money -= price;
+    this.send(p, { t: 'shop', k: s.kind, ok: price, w });
   }
 
   // ---------- рассылка ----------
@@ -1194,7 +1245,7 @@ class Room {
         c.push(this.vehicles.snap(v));
       }
       const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)),
-        p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0, p.stars || 0];
+        p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0, p.stars || 0, p.money || 0];
       const gr = [];
       for (const g of this.grenades) if (Math.abs(g.x - p.x) < vw && Math.abs(g.y - p.y) < vh) gr.push([g.id, r2(g.x), r2(g.y), g.t < 0.6 ? 1 : 0]);
       this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), h: this.npcs.heliSnap(p, vw + 15, vh + 15), gr, me });
