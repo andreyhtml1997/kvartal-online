@@ -1577,7 +1577,14 @@
       idx = (idx + dir + RADIO.length) % RADIO.length;
       tune();
     }
-    el.addEventListener('playing', () => { if (state === 'tuning') { state = 'on'; fails = 0; clearTimeout(timer); save(); show(); } });
+    el.addEventListener('playing', () => { clearTimeout(timer); if (state === 'tuning') { state = 'on'; fails = 0; save(); show(); } });
+    // поток завис (ни ошибки, ни конца - тишина): ждёт данных дольше 12 с - следующая станция
+    el.addEventListener('waiting', () => {
+      if (state !== 'on') return;
+      const my = gen;
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (my === gen && state === 'on' && el.readyState < 3) fail(); }, 12000);
+    });
     const current = () => idx >= 0 && el.getAttribute('src') === RADIO[idx].url;
     el.addEventListener('error', () => { if (el.error && current()) fail(); });
     el.addEventListener('ended', () => { if (state !== 'off' && current()) fail(); });
