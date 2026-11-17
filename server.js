@@ -25,6 +25,7 @@ const MIME = {
 };
 
 const rooms = new Map();
+const load = { ema: 0, max: 0 };
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -32,7 +33,8 @@ const server = http.createServer((req, res) => {
     let players = 0;
     for (const r of rooms.values()) players += r.humanCount();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players }));
+    // tickMs - сколько в среднем занимает такт всех комнат, tickMax - худший недавний (замер нагрузки на хостинге)
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players, tickMs: Math.round(load.ema * 1000) / 1000, tickMax: Math.round(load.max * 100) / 100 }));
     return;
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
@@ -127,10 +129,18 @@ setInterval(() => {
   last = now;
   let steps = 0;
   while (acc >= TICK_MS && steps < 4) {
+    const t0 = process.hrtime.bigint();
+    let busy = false;
     for (const room of rooms.values()) {
       if (room.humanCount() > 0) {
+        busy = true;
         try { room.tick(); } catch (e) { console.error('room', room.id, e); }
       }
+    }
+    if (busy) {
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      load.ema = load.ema * 0.98 + ms * 0.02;
+      load.max = Math.max(load.max * 0.995, ms);
     }
     acc -= TICK_MS;
     steps++;
