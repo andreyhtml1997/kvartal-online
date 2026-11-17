@@ -1,5 +1,5 @@
 /* Мотоцикл в браузере (нужен сервер с KV_DEBUG=1): сесть, разогнаться быстрее машины, на полном ходу врезаться
-   (в машину или в край карты) и вылететь через руль; второй игрок видит мотоцикл с водителем; ошибок нет. */
+   (в машину или в край карты) и остаться на мотоцикле; второй игрок видит мотоцикл с водителем; ошибок нет. */
 const { chromium } = require(process.env.PW_PATH || 'playwright');
 const BASE = (process.argv[2] || 'http://localhost:8099').replace(/\/$/, '');
 const OUT = process.argv[3] || '.';
@@ -47,12 +47,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(seen >= 1, 'второй игрок видит мотоцикл с водителем');
     await obs.screenshot({ path: OUT + '/moto_obs.png' });
 
-    // газ до упора: быстрее машины (21 м/с); держим, пока не врежемся - на полном ходу водитель вылетает.
-    // Встречная машина может сбить раньше, чем мотоцикл разгонится, - тогда новый мотоцикл (до трёх попыток)
-    let vmax = 0, thrown = false, shot = false;
-    for (let attempt = 0; attempt < 3 && !(vmax > 22 && thrown); attempt++) {
+    // газ до упора: быстрее машины (21 м/с); держим, пока не врежемся - водитель остаётся на мотоцикле (игроки не вылетают -
+    // решение владельца 17.11.2026). Встречная машина может остановить раньше разгона - тогда новый мотоцикл (до трёх попыток)
+    let vmax = 0, crashed = false, stayed = false, shot = false;
+    for (let attempt = 0; attempt < 3 && !(vmax > 22 && crashed); attempt++) {
       if (attempt) {
-        await sleep(1300);
+        if (await kv(() => !!window.__kv.S.me.vehicle)) { await pc.keyboard.press('KeyF'); await sleep(700); }
         await kv(() => window.__kv.send({ t: 'dbg', veh: 'moto', god: 1, immortal: 1 }));
         await sleep(800);
         await pc.keyboard.press('KeyF');
@@ -60,22 +60,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       }
       await pc.keyboard.down('KeyW');
       const t0 = Date.now();
+      let prev = 0;
       while (Date.now() - t0 < 9000) {
         await sleep(100);
-        const s = await kv(() => { const S = window.__kv.S; return { v: S.car ? S.car.v : -1, veh: S.me.vehicle, roll: S.me.rollUntil > performance.now() }; });
+        const s = await kv(() => { const S = window.__kv.S; return { v: S.car ? S.car.v : -1, veh: S.me.vehicle }; });
         if (s.v > vmax) vmax = s.v;
         if (!shot && s.v > 15) { shot = true; await pc.screenshot({ path: OUT + '/moto_ride.png' }); }
-        if (!s.veh) { thrown = thrown || s.roll; break; }
+        if (!s.veh) break;
+        if (prev > 12 && s.v < prev - 8) {
+          crashed = true;
+          await sleep(700);
+          stayed = await kv(() => !!(window.__kv.S.me.vehicle && window.__kv.S.car && window.__kv.S.car.kind === 5));
+          break;
+        }
+        prev = s.v;
       }
       await pc.keyboard.up('KeyW');
-      console.log(`  попытка ${attempt + 1}: разгон до ${vmax.toFixed(1)} м/с, ${thrown ? 'вылетел' : 'не вылетел'}`);
+      console.log(`  попытка ${attempt + 1}: разгон до ${vmax.toFixed(1)} м/с, ${crashed ? (stayed ? 'врезался и остался на мотоцикле' : 'врезался и слетел') : 'не врезался'}`);
     }
-    const toast = await kv(() => document.getElementById('toast') ? document.getElementById('toast').textContent : '');
-    console.log(`разгон: до ${vmax.toFixed(1)} м/с; ${thrown ? 'врезался и вылетел' : 'не вылетел'}; надпись: «${toast}»`);
     check(vmax > 22, 'мотоцикл быстрее машины (больше 22 м/с)');
-    check(thrown, 'на полном ходу врезался - вылетел через руль и кувыркается');
+    check(crashed && stayed, 'врезался на полном ходу - водитель остался на мотоцикле');
     await sleep(500);
-    await pc.screenshot({ path: OUT + '/moto_fall.png' });
+    await pc.screenshot({ path: OUT + '/moto_crash.png' });
   } catch (e) {
     ok = false;
     console.log('FAIL исключение:', e.message);

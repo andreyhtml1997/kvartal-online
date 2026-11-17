@@ -2153,7 +2153,7 @@
         S.me.sprinting = false;
         if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
         else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
-        else if (m.kind === 5) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить. Сильный удар - вылетите' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Вас видно и можно подстрелить, от сильного удара вылетите', 3400);
+        else if (m.kind === 5) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Он быстрый, но вас видно и можно подстрелить', 3400);
         else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, F - выйти, Q/E - радио');
         updateHud(true);
         break;
@@ -2179,7 +2179,6 @@
         // взрывная волна толкает и закручивает свою машину
         if (S.car) { S.car.sx += m.x; S.car.sy += m.y; if (m.w) S.car.w = clamp((S.car.w || 0) + m.w, -4, 4); if (!a11y('motion')) S.shake = Math.max(S.shake, 0.5); }
         break;
-      case 'fall': toast('Вы вылетели с мотоцикла!', 1800); break;
       case 'kb':
         S.me.kvx += m.x; S.me.kvy += m.y;
         if (m.roll) { S.me.rollUntil = performance.now() + KV.ROLL.TIME * 1000; S.me.rollAng = Math.atan2(m.y, m.x); S.me.sprinting = false; }

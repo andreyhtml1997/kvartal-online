@@ -7,7 +7,8 @@
  *   bot     - угнал бот: физику и руль считает сервер;
  *   parked  - стоит без водителя (на парковке или брошена), её можно сдвинуть тараном.
  * Любую машину можно угнать. Удары по людям - урон по скорости. Разбитая машина горит и взрывается.
- * Мотоцикл - та же машина, только меньше и быстрее: водитель сидит открыто, от сильного удара вылетает (throwRider).
+ * Мотоцикл - та же машина, только меньше и быстрее: водитель сидит открыто (его ранят пули, огонь и взрывы), но с него
+ * не вылетают - ни от ударов, ни от взрывной волны (решение владельца 17.11.2026).
  */
 const KV = require('../public/shared.js');
 const { CAR, CAR_BLAST } = KV;
@@ -24,8 +25,6 @@ const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 const DIR_ANGLE = [0, Math.PI / 2, Math.PI, -Math.PI / 2]; // восток, юг, запад, север
 const ikey = (i, j) => i * 100 + j + 1;
 const KIND_CODE = { police: 1, amb: 2, swat: 3, tank: 4, moto: 5 }; // вид машины в снимке для браузера
-const MOTO_FALL = 9;                 // м/с: удар сильнее - водитель мотоцикла вылетает через руль
-const MOTO_BLAST_FALL = 5;           // взрывная волна сильнее - тоже вылетает
 const MOTO_BLAST = { r: 3, dmg: 70, tile: 220 }; // бак мотоцикла взрывается слабее машины
 
 class Vehicles {
@@ -365,8 +364,6 @@ class Vehicles {
     this.damage(a, dmg * 0.7, attackerId);
     this.damage(b, dmg * 0.7, attackerId);
     this.room.ev.cr.push([r2((a.x + b.x) / 2), r2((a.y + b.y) / 2), Math.round(impact)]);
-    // мотоциклист от сильного удара вылетает; урон засчитывается водителю второй машины
-    if (impact > MOTO_FALL) { if (a.moto) this.throwRider(a, impact, b); if (b.moto) this.throwRider(b, impact, a); }
   }
 
   damage(v, amount, attackerId) {
@@ -402,8 +399,6 @@ class Vehicles {
     let nx = v.x - x, ny = v.y - y;
     const l = Math.hypot(nx, ny) || 1;
     nx /= l; ny /= l;
-    // мотоциклиста сильной волной сбрасывает (урон от взрыва он уже получил как пеший), мотоцикл отлетает сам
-    if (v.moto && v.driver && s >= MOTO_BLAST_FALL) this.throwRider(v, 0, null, nx, ny);
     const jx = nx * s, jy = ny * s;
     const cp = KV.carContactPoint(v, x, y);
     if (v.state === 'human') {
@@ -661,29 +656,6 @@ class Vehicles {
     if (v.kind === 'tank') this.tankRam(v, s, p.id); // танк игрока таранит кирпичную стену
     if (s > 6) this.damage(v, (s - 5) * 6 * CRASH_K * (v.moto ? 0.5 : 1), v.lastAttacker || p.id);
     this.room.ev.cr.push([r2(v.x), r2(v.y), Math.round(s)]);
-    if (v.moto && s > MOTO_FALL) this.throwRider(v, s, null);
-  }
-
-  // Мотоцикл: сильный удар или взрыв рядом - водитель вылетает через руль, кувыркается и получает урон по силе удара
-  // (урон засчитывается водителю второй машины). (dx, dy) - куда отбросить (от взрыва); иначе - по ходу мотоцикла.
-  throwRider(v, impact, other, dx, dy) {
-    const room = this.room;
-    const p = v.driver ? room.players.get(v.driver) : null;
-    if (!p || !p.alive || p.vehicle !== v.id) return;
-    const fwd = v.v < -0.5 ? -1 : 1;
-    const ux = dx === undefined ? Math.cos(v.a) * fwd : dx, uy = dy === undefined ? Math.sin(v.a) * fwd : dy;
-    v.v = 0; v.sx = 0; v.sy = 0; // мотоцикл падает и останавливается (и exit не добавит своего толчка на ходу)
-    this.exit(p, true);
-    const k = Math.min(9, 4 + impact * 0.2); // скорость кувырка, м/с
-    p.rollUntil = room.time + KV.ROLL.TIME;
-    if (p.isBot) { p.rollVx = ux * k; p.rollVy = uy * k; }
-    else {
-      p.budget += k + 1;
-      room.send(p, { t: 'kb', x: r2(ux * k), y: r2(uy * k), roll: 1 });
-      room.send(p, { t: 'fall' });
-    }
-    const dmg = impact > 0 ? Math.max(6, Math.min(45, (impact - 6) * 2.5)) : 0;
-    if (dmg) room.damage(p, dmg, other ? other.driver || this.npcCredit(other) : 0, -2, p.x, p.y);
   }
 
   // ---------- такт ----------

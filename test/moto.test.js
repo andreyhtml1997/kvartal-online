@@ -1,8 +1,8 @@
 'use strict';
 /* Мотоциклы (17.11.2026): 4-6 на карте (у больницы, у оружейного, на стоянках); быстрее машины (27 м/с) и вертлявее,
-   узкий - проезжает в проход шириной в клетку; водитель сидит открыто - его ранят пули и взрывы; от сильного удара
-   (о стену, о машину, взрывной волной) он вылетает через руль и кувыркается; бак взрывается слабее машины;
-   взорванный мотоцикл со стоянки появляется снова. */
+   узкий - проезжает в проход шириной в клетку; водитель сидит открыто - его ранят пули и взрывы, но с мотоцикла
+   он не вылетает и от аварий не ранится (решение владельца); бак взрывается слабее машины; взорванный мотоцикл
+   со стоянки появляется снова. */
 const assert = require('assert');
 const KV = require('../public/shared.js');
 const { Room } = require('../game/room');
@@ -88,41 +88,26 @@ console.log(`3 пули сбоку: мотоциклист потерял ${lost
 assert.ok(lostOnBike >= 2 * WEAPONS[W.PISTOL].dmg && lostInCar === 0 && carV.hp < carHp0, 'на мотоцикле водителя видно и ранят, в машине прикрывает кузов');
 V.exit(me, true); V.remove(carV);
 
-// удар о стену: слабый - едет дальше, сильный - вылетает через руль, кувыркается, теряет здоровье
+// удары: о стену на полном ходу и таран машиной - игрок не вылетает и от аварии не ранится, ломается только мотоцикл
+// (решение владельца 17.11.2026: «игроки не вылетают из машины при столкновении»)
 const bike2 = V.setKind(V.create(x0, y0, Math.PI / 2, 4, 'parked', null), 'moto');
 room.teleport(me, x0 + 1.2, y0); me.hp = 100;
 assert.ok(V.enter(me, bike2.id), 'сел на второй мотоцикл');
-room.time += 1; V.onCrash(me, { s: 7 });
-const softStays = me.vehicle === bike2.id && me.hp === 100;
-room.time += 1; ws.msgs.length = 0; V.onCrash(me, { s: 15 });
-const thrown = me.vehicle === 0;
-console.log(`удар 7 м/с: ${softStays ? 'едет дальше' : 'упал'}; удар 15 м/с: ${thrown ? 'вылетел' : 'удержался'}, здоровье ${me.hp.toFixed(1)}, кувырок ${me.rollUntil > room.time ? 'да' : 'нет'}, мотоцикл ${bike2.state}`);
-assert.ok(softStays, 'от лёгкого удара не падает');
-assert.ok(thrown && Math.abs(me.hp - 77.5) < 0.01 && me.rollUntil > room.time && ws.msgs.some(q => q.t === 'fall') && bike2.state === 'parked', 'от сильного удара вылетает, кувыркается, теряет 22.5 здоровья');
-
-// удар машиной: урон засчитывается её водителю
-me.hp = 100; me.rollUntil = 0;
-room.teleport(me, bike2.x + 1.2, bike2.y);
-assert.ok(V.enter(me, bike2.id), 'снова сел');
+const bikeHp0 = bike2.hp;
+room.time += 1; V.onCrash(me, { s: 25 });
 const ram = V.create(x0 + 30, y0, 0, 1, 'parked', null);
 ram.driver = att.id;
-let credited = 0;
-const damage0 = room.damage.bind(room);
-room.damage = (t, amount, by, ...rest) => { if (t === me && by === att.id) credited += amount; return damage0(t, amount, by, ...rest); };
-room.time += 1; V.crash(ram, bike2, 12, att.id);
-room.damage = damage0;
-console.log(`таран машиной 12 м/с: ${me.vehicle ? 'удержался' : 'вылетел'}, урон от водителя машины ${credited.toFixed(1)}`);
-assert.ok(me.vehicle === 0 && Math.abs(credited - 15) < 0.01, 'таран машиной сбрасывает и засчитывается её водителю');
+room.time += 1; V.crash(ram, bike2, 14, att.id);
 ram.driver = 0; V.remove(ram);
+console.log(`удар о стену 25 м/с и таран машиной 14 м/с: ${me.vehicle === bike2.id ? 'остался на мотоцикле' : 'вылетел'}, здоровье ${me.hp}, мотоцикл ${bike2.hp.toFixed(0)}/${bikeHp0}`);
+assert.ok(me.vehicle === bike2.id && me.hp === 100 && bike2.hp < bikeHp0, 'от ударов не вылетает и не ранится, ломается только мотоцикл');
 
-// взрыв рядом: мотоциклиста ранит и сбрасывает, водитель машины рядом цел
-me.hp = 100;
-room.teleport(me, bike2.x + 1.2, bike2.y);
-assert.ok(V.enter(me, bike2.id), 'сел перед взрывом');
+// взрыв рядом: мотоциклиста ранит (он сидит открыто), но с мотоцикла не сбрасывает
 room.explode(bike2.x + 2.2, bike2.y, CAR_BLAST, att.id, -1);
-const blastLost = 100 - me.hp, blastThrown = me.vehicle === 0;
-console.log(`взрыв в 2.2 м: мотоциклист потерял ${blastLost.toFixed(0)} здоровья, ${blastThrown ? 'сброшен' : 'удержался'}`);
-assert.ok(blastLost > 10 && blastThrown, 'взрыв ранит мотоциклиста и сбрасывает его');
+const blastLost = 100 - me.hp;
+console.log(`взрыв в 2.2 м: мотоциклист потерял ${blastLost.toFixed(0)} здоровья, ${me.vehicle === bike2.id ? 'остался на мотоцикле' : 'сброшен'}`);
+assert.ok(blastLost > 10 && me.vehicle === bike2.id, 'взрыв ранит мотоциклиста, но не сбрасывает');
+V.exit(me, true);
 
 // своя скорость 26 м/с: сервер не откатывает мотоцикл
 me.hp = 100;
