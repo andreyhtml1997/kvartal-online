@@ -27,9 +27,14 @@ const AMBIENT_NEAR = 12, AMBIENT_CAP = 45; // прохожих вокруг ка
 const WALK = 1.4, RUN = 6.2, JOG = 4.3;
 const STAR_HEAT = [0, 25, 90, 200, 380, 650];
 const POLICE_CAP = 7, AMB_CAP = 2;
-// вертолёт: прочность (2 ракеты в упор, 3 рядом или ~25 попаданий из автомата), сколько всего; танков всего; снаряд танка раз в 3-4 с
-const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 3, TANK_SHELL = 3.5;
+// вертолёт: прочность (2 ракеты в упор, 3 рядом или ~25 попаданий из автомата), сколько всего; танков всего
+const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 3;
 const HELI_BLAST = { r: 4.5, dmg: 140, tile: 420 };
+// вертолёт медленнее, стреляет реже и неметче, чем был (решение владельца 17.11.2026; было 14 м/с, очередь 6 раз в 3.5-5 с, ±0.28)
+const HELI_SPEED = 8, HELI_BURST = 5, HELI_PAUSE = [7, 10], HELI_SPREAD = 0.42;
+// спецназ спускается с вертолёта по верёвочной лестнице: сколько бойцов и как часто; где «земля под вертолётом» -
+// там, куда падает его тень (в браузере тень сдвинута на столько же)
+const HELI_DROP = 3, HELI_DROP_EVERY = 45, ROPE_DX = 1.4, ROPE_DY = 1.9;
 // NPC ближе этого к взрыву (у взорвавшейся машины - к её кузову) погибает сразу, если его не закрывает стена.
 // Решение владельца 17.11.2026: машина взорвалась рядом с полицией - полиция погибла; так же от любого взрыва.
 const BLAST_KILL = 3;
@@ -91,7 +96,7 @@ class Npcs {
     this.list.delete(n.id);
     if (n.team) n.team.members = n.team.members.filter(id => id !== n.id);
   }
-  randomGun() { const r = Math.random(); return r < 0.6 ? W.PISTOL : r < 0.8 ? W.SHOTGUN : W.RIFLE; }
+  randomGun() { const r = Math.random(); return r < 0.45 ? W.PISTOL : r < 0.65 ? W.UZI : r < 0.82 ? W.SHOTGUN : W.RIFLE; }
   humans() { const out = []; for (const p of this.room.players.values()) if (!p.isBot) out.push(p); return out; }
   nearHuman(x, y, r) { for (const p of this.room.players.values()) if (!p.isBot && Math.abs(p.x - x) < r && Math.abs(p.y - y) < r && Math.hypot(p.x - x, p.y - y) < r) return true; return false; }
   // видно ли точку на экране хоть у одного игрока
@@ -339,7 +344,7 @@ class Npcs {
     if (d > 45 && !law) { this.calm(n); return; }
     const los = d < 32 && geom.losClear(this.map, n.x, n.y, tx, ty, true);
     const w = WEAPONS[n.w];
-    const want = n.w === W.SHOTGUN ? 4.5 : 7;
+    const want = n.w === W.SHOTGUN ? 4.5 : n.w === W.UZI ? 6 : 7;
     const onScreen = room.onScreenOf(t, n.x, n.y);
     if (!los || d > want + 3 || !onScreen) this.follow(n, tx, ty, RUN * 0.85, dt, 2200);
     else {
@@ -393,7 +398,7 @@ class Npcs {
     n.hp -= amount;
     if (!(opt && opt.silent)) this.room.ev.nh.push([r2(hx), r2(hy)]);
     const att = attackerId > 0 ? this.room.players.get(attackerId) : null;
-    if (att && !att.isBot) this.crime(att, LAW.has(n.kind) ? 18 : 8, 'n' + n.id);
+    if (att && !att.isBot) this.crime(att, LAW.has(n.kind) || n.kind === K.MEDIC ? 30 : 8, 'n' + n.id); // полиция и врачи - строже (17.11.2026: было 18 и 8)
     if (n.hp <= 0) { this.die(n, attackerId, weaponId); return; }
     this.provoked(n, attackerId, hx, hy);
   }
@@ -419,7 +424,7 @@ class Npcs {
     if (k && !k.isBot) {
       if (LAW.has(n.kind)) k.copKills = (k.copKills || 0) + 1; else k.civKills = (k.civKills || 0) + 1;
       room.sbDirty = true;
-      this.crime(k, LAW.has(n.kind) ? 60 : 25);
+      this.crime(k, LAW.has(n.kind) || n.kind === K.MEDIC ? 80 : 25);
     }
     if (n.team) this.teamPanic(n.x, n.y);
     this.noise(n.x, n.y, 12);
@@ -692,15 +697,10 @@ class Npcs {
     if (v.role === 'tank') {
       if (!t || !t.alive || !(t.stars >= 5)) { v.role = 'leave'; P.dest = null; }
       else {
-        // едет прямо на цель и давит всё на пути; башня смотрит на цель; снаряд - когда цель видна и танк у неё на экране
+        // едет прямо на цель и давит всё на пути; башня смотрит на цель, но вражеский танк не стреляет -
+        // из танка стреляют только игроки (решение владельца 17.11.2026)
         gx = txp; gy = typ; direct = los;
         v.turret = Math.atan2(typ - v.y, txp - v.x);
-        if (los && dT > 5 && dT < 26 && now >= (v.shellAt || 0) && room.onScreenOf(t, v.x, v.y)) {
-          v.shellAt = now + TANK_SHELL + rnd(-0.5, 0.5);
-          const a = v.turret + rnd(-0.05, 0.05);
-          room.spawnShot(v.x + Math.cos(a) * 2.6, v.y + Math.sin(a) * 2.6, a, WEAPONS[W.LAUNCHER], NPC_ID - K.ARMY, v.id, Math.max(2.5, dT - 2.6 + rnd(-1, 1)), drv.id);
-          this.noise(v.x, v.y, 16);
-        }
       }
     }
     if (v.role === 'ram') { gx = txp; gy = typ; direct = los; }
@@ -884,7 +884,7 @@ class Npcs {
       v.role = 'police'; v.siren = true;
       for (let i = 0; i < 6; i++) v.crew.push(this.create(K.SWAT, v.x, v.y, { state: 'incar', veh: v.id, w: W.RIFLE, hp: 130 }).id);
     } else {
-      v.role = 'tank'; v.siren = false; v.turret = sp.a; v.shellAt = room.time + 2;
+      v.role = 'tank'; v.siren = false; v.turret = sp.a;
       v.crew.push(this.create(K.ARMY, v.x, v.y, { state: 'incar', veh: v.id, w: W.RIFLE, hp: 120 }).id);
     }
     return v;
@@ -931,27 +931,62 @@ class Npcs {
       for (const p of room.players.values()) { if (p.isBot) continue; const d = Math.hypot(p.x - h.x, p.y - h.y); if (d < bd) { bd = d; best = p; } }
       if (!best || (!this.seen(h.x, h.y, 6) && bd > 30)) { this.helis.delete(h.id); room.ev.hx.push(h.id); return; }
       gx = h.x + ((h.x - best.x) / (bd || 1)) * 10; gy = h.y + ((h.y - best.y) / (bd || 1)) * 10;
+      h.drop = null;
     } else {
-      h.orbit += dt * 0.5;
-      gx = t.x + Math.cos(h.orbit) * 9; gy = t.y + Math.sin(h.orbit) * 7;
+      // высадка: над целью зависает и спускает троих по лестнице - раз в 45 с, пока его бойцы не перебиты
+      if (!h.drop && now >= (h.dropAt || 0) && Math.hypot(t.x - h.x, t.y - h.y) < 12 && this.heliSquad(h) < 2) {
+        h.dropAt = now + HELI_DROP_EVERY;
+        const spot = this.ropeSpot(h.x + ROPE_DX, h.y + ROPE_DY);
+        if (spot) h.drop = { x: spot[0], y: spot[1], left: HELI_DROP, next: now + 1.2 };
+      }
+      if (h.drop) { gx = h.drop.x - ROPE_DX; gy = h.drop.y - ROPE_DY; this.ropeStep(h, t, now); }
+      else {
+        h.orbit += dt * 0.3;
+        gx = t.x + Math.cos(h.orbit) * 9; gy = t.y + Math.sin(h.orbit) * 7;
+      }
     }
     const dx = gx - h.x, dy = gy - h.y, d = Math.hypot(dx, dy);
     if (d > 0.05) {
-      const sp = Math.min(14, d * 2) * dt;
+      const sp = Math.min(HELI_SPEED, d * 1.5) * dt;
       h.x = clamp(h.x + (dx / d) * sp, -30, m.w + 30); h.y = clamp(h.y + (dy / d) * sp, -30, m.h + 30);
       h.a += angDiff(Math.atan2(dy, dx), h.a) * Math.min(1, dt * 3);
     }
     // очередь из пулемёта: неметко; только когда вертолёт виден у цели на экране и цель не под крышей
     if (h.state === 'fly' && t) {
-      if (h.burst <= 0 && now >= h.nextBurst && room.onScreenOf(t, h.x, h.y, 0) && !this.underRoof(t.x, t.y)) { h.burst = 6; h.nextBurst = now + rnd(3.5, 5); }
+      if (h.burst <= 0 && now >= h.nextBurst && room.onScreenOf(t, h.x, h.y, 0) && !this.underRoof(t.x, t.y)) { h.burst = HELI_BURST; h.nextBurst = now + rnd(HELI_PAUSE[0], HELI_PAUSE[1]); }
       if (h.burst > 0 && now >= h.shotT) {
-        h.burst--; h.shotT = now + 0.11; h.shotAt = now;
+        h.burst--; h.shotT = now + 0.14; h.shotAt = now;
         const dist = Math.hypot(t.x - h.x, t.y - h.y);
-        const a = Math.atan2(t.y - h.y, t.x - h.x) + rnd(-0.28, 0.28); // сверху и на ходу - неметко
+        const a = Math.atan2(t.y - h.y, t.x - h.x) + rnd(-HELI_SPREAD, HELI_SPREAD); // сверху и на ходу - неметко
         room.spawnShot(h.x, h.y, a, WEAPONS[W.RIFLE], NPC_ID - K.HELI, 0, dist, 0, 1);
-        if (h.burst === 5) this.noise(t.x, t.y, 12);
+        if (h.burst === HELI_BURST - 1) this.noise(t.x, t.y, 12);
       }
     }
+  }
+  // спуск по лестнице: вертолёт над точкой - раз в секунду внизу появляется боец и сразу идёт ловить
+  ropeStep(h, t, now) {
+    const dr = h.drop;
+    if (Math.hypot(h.x + ROPE_DX - dr.x, h.y + ROPE_DY - dr.y) > 1.5) { dr.next = Math.max(dr.next, now + 0.3); return; }
+    if (now < dr.next) return;
+    const q = KV.collideCircle(this.map, dr.x + rnd(-0.5, 0.5), dr.y + rnd(-0.5, 0.5), KV.PLAYER_R);
+    const n = this.create(K.SWAT, q[0], q[1], { w: W.RIFLE, hp: 130, heli: h.id, rope: now });
+    this.fight(n, t.id, 90);
+    dr.left--; dr.next = now + 1.0;
+    if (dr.left <= 0) h.drop = null;
+  }
+  heliSquad(h) { let c = 0; for (const n of this.list.values()) if (n.alive && n.heli === h.id) c++; return c; }
+  // свободное место на улице (не в доме, не в воде) рядом с точкой - туда спускаются по лестнице
+  ropeSpot(x, y) {
+    const m = this.map;
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random() * Math.PI * 2, r = i === 0 ? 0 : 1 + Math.random() * 3;
+      const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r, tx = Math.floor(px), ty = Math.floor(py);
+      if (tx < 1 || ty < 1 || tx >= m.w - 1 || ty >= m.h - 1) continue;
+      const k = ty * m.w + tx;
+      if (m.owner[k] >= 0 || m.ground[k] === G.WATER || !KV.circleFree(m, px, py, KV.PLAYER_R + 0.2)) continue;
+      return [px, py];
+    }
+    return null;
   }
   // под крышей целого дома (вертолёт сверху не видит)
   underRoof(x, y) {
@@ -992,7 +1027,7 @@ class Npcs {
     for (const h of this.helis.values()) {
       if (Math.abs(h.x - p.x) > vw || Math.abs(h.y - p.y) > vh) continue;
       out.push([h.id, r2(h.x), r2(h.y), r3(h.a), Math.max(0, Math.ceil((100 * h.hp) / h.maxHp)),
-        (h.state === 'fall' ? 1 : 0) | (h.state === 'leave' ? 2 : 0) | (now - h.shotAt < 0.15 ? 4 : 0), h.target]);
+        (h.state === 'fall' ? 1 : 0) | (h.state === 'leave' ? 2 : 0) | (now - h.shotAt < 0.15 ? 4 : 0) | (h.drop ? 8 : 0), h.target]);
     }
     return out;
   }
@@ -1173,7 +1208,7 @@ class Npcs {
     for (const n of this.list.values()) {
       if (n.state === 'incar' || Math.abs(n.x - p.x) > vw || Math.abs(n.y - p.y) > vh) continue;
       const fl = (n.alive ? 1 : 0) | (n.spd > 3 ? 2 : 0) | (now - n.shotAt < 0.15 ? 4 : 0) | (n.phase === 'heal' && n.state === 'medic' ? 8 : 0) |
-        (n.state === 'fight' ? 16 : 0) | (n.burnUntil > now ? 32 : 0);
+        (n.state === 'fight' ? 16 : 0) | (n.burnUntil > now ? 32 : 0) | (n.rope && now - n.rope < 0.9 ? 64 : 0);
       out.push([n.id, r2(n.x), r2(n.y), r3(n.a), fl, n.w, n.kind, n.look, Math.max(0, Math.ceil((100 * n.hp) / n.maxHp))]);
     }
     return out;

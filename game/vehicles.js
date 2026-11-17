@@ -365,7 +365,7 @@ class Vehicles {
     if (attackerId) v.lastAttacker = attackerId;
     // по машинам стрелять нельзя: звёзды розыска (кроме машин игроков и ботов - это перестрелка)
     const att = attackerId > 0 ? this.room.players.get(attackerId) : null;
-    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') this.room.npcs.crime(att, v.kind === 'police' || v.kind === 'swat' || v.kind === 'tank' ? 8 : 3, 'v' + v.id);
+    if (att && !att.isBot && v.state !== 'human' && v.state !== 'bot') this.room.npcs.crime(att, v.kind === 'police' || v.kind === 'swat' || v.kind === 'tank' || v.kind === 'amb' ? 15 : 3, 'v' + v.id); // служебные - строже (17.11.2026: было 8, у скорой 3)
     if (v.state === 'traffic' && attackerId > 0) this.npcFlee(v, attackerId, 'shot');
     // горящую машину пули добивают: каждое попадание приближает взрыв
     if (v.burn > 0) { v.burn = Math.max(0.05, v.burn - amount / 40); return; }

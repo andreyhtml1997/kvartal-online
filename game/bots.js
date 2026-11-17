@@ -167,7 +167,8 @@ class Bots {
     let mx = 0, my = 0;
     if (t && t.alive) {
       const dx = t.x - p.x, dy = t.y - p.y, d = Math.hypot(dx, dy) || 1;
-      const want = WEAPONS[p.cur].melee ? 0.7 : p.cur === W.SHOTGUN ? 4 : p.cur === W.FLAMER ? 3.5 : p.cur === W.SNIPER ? 14 : p.cur === W.LAUNCHER ? 9 : 7;
+      const want = WEAPONS[p.cur].melee ? 0.7 : p.cur === W.SHOTGUN || p.cur === W.AUTOSHOT ? 4 : p.cur === W.FLAMER ? 3.5 : p.cur === W.SNIPER ? 14 :
+        p.cur === W.LAUNCHER || p.cur === W.GRENADE || p.cur === W.MINIGUN ? 9 : p.cur === W.TRIPLE ? 8 : 7;
       const ux = dx / d, uy = dy / d;
       const fwd = d > want + 1.5 ? 1 : d < want - 1.5 ? -0.7 : 0;
       ai.strafeT -= dt;
@@ -268,7 +269,7 @@ class Bots {
 
     if (ai.path && ai.pi < ai.path.length && now < ai.repath) return;
     let gx, gy;
-    const strong = p.ammo[W.RIFLE] > 0 || p.ammo[W.SHOTGUN] > 0 || p.ammo[W.SNIPER] > 0 || p.ammo[W.LAUNCHER] > 0 || p.ammo[W.FLAMER] > 0 || p.ammo[W.SAW] > 0;
+    const strong = [W.RIFLE, W.SHOTGUN, W.SNIPER, W.LAUNCHER, W.FLAMER, W.SAW, W.MINIGUN, W.AUTOSHOT, W.TRIPLE, W.UZI, W.GRENADE].some(w => p.ammo[w] > 0);
     const pk = this.nearestUseful(p, !strong);
     let prey = null;
     if (strong) {
@@ -382,11 +383,11 @@ class Bots {
   pickWeapon(p, d) {
     const has = w => w === W.FISTS || p.ammo[w] > 0;
     let order;
-    if (p.vehicle) order = [W.RIFLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.FISTS]; // из окна - только стреляющее
-    else if (d < 2.2) order = [W.SAW, W.SHOTGUN, W.FLAMER, W.RIFLE, W.PISTOL, W.SNIPER, W.FISTS];
-    else if (d < 5.5) order = [W.FLAMER, W.SHOTGUN, W.RIFLE, W.PISTOL, W.SAW, W.SNIPER, W.FISTS];
-    else if (d > 11 && d < 99) order = [W.SNIPER, W.RIFLE, W.LAUNCHER, W.PISTOL, W.SHOTGUN, W.FLAMER, W.SAW, W.FISTS];
-    else order = [W.LAUNCHER, W.RIFLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.SAW, W.FISTS];
+    if (p.vehicle) order = [W.MINIGUN, W.RIFLE, W.UZI, W.AUTOSHOT, W.TRIPLE, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.FISTS]; // из окна - только стреляющее
+    else if (d < 2.2) order = [W.SAW, W.AUTOSHOT, W.SHOTGUN, W.FLAMER, W.MINIGUN, W.UZI, W.RIFLE, W.TRIPLE, W.PISTOL, W.SNIPER, W.FISTS];
+    else if (d < 5.5) order = [W.FLAMER, W.AUTOSHOT, W.MINIGUN, W.SHOTGUN, W.TRIPLE, W.UZI, W.RIFLE, W.PISTOL, W.SAW, W.SNIPER, W.FISTS];
+    else if (d > 11 && d < 99) order = [W.SNIPER, W.MINIGUN, W.RIFLE, W.LAUNCHER, W.TRIPLE, W.GRENADE, W.PISTOL, W.UZI, W.SHOTGUN, W.FLAMER, W.SAW, W.FISTS];
+    else order = [W.LAUNCHER, W.MINIGUN, W.RIFLE, W.TRIPLE, W.GRENADE, W.AUTOSHOT, W.UZI, W.SHOTGUN, W.PISTOL, W.SNIPER, W.FLAMER, W.SAW, W.FISTS];
     for (const w of order) if (has(w)) { p.cur = w; return; }
   }
 
@@ -394,7 +395,7 @@ class Bots {
     let best = null, bd = weak ? 70 : 28;
     for (const pk of this.room.pickups.values()) {
       let useful;
-      if (pk.kind === PK.WEAPON) useful = !(p.ammo[pk.w] >= WEAPONS[pk.w].max);
+      if (pk.kind === PK.WEAPON) useful = !WEAPONS[pk.w].noAmmo && !(p.ammo[pk.w] >= WEAPONS[pk.w].max); // щит ботам не нужен
       else if (pk.kind === PK.AMMO) useful = p.ammo[pk.w] >= 0 && p.ammo[pk.w] < WEAPONS[pk.w].max;
       else if (pk.kind === PK.HEALTH) useful = p.hp < 70;
       else if (pk.kind === PK.SHROOM) useful = false;

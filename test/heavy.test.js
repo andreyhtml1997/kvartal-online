@@ -77,15 +77,18 @@ N.crime(me, STAR_HEAT[4] - me.heat + 1);
 assert.strictEqual(me.stars, 4, 'четыре звезды');
 let heliMinD = 1e9;
 const s2 = shots.length;
-run(30, () => {
+const roped = () => [...N.list.values()].filter(n => n.kind === K.SWAT && n.heli).length;
+run(40, () => {
   for (const h of N.helis.values()) heliMinD = Math.min(heliMinD, Math.hypot(h.x - me.x, h.y - me.y));
-  if (shots.slice(s2).filter(s => s.owner === NPC_ID - K.HELI).length >= 12) return false;
+  if (shots.slice(s2).filter(s => s.owner === NPC_ID - K.HELI).length >= 10 && roped() >= 3) return false;
 });
 const heliShots = shots.slice(s2).filter(s => s.owner === NPC_ID - K.HELI);
 console.log(`вертолёт: в воздухе ${N.helis.size}, ближе всего ${heliMinD.toFixed(1)} м; выстрелов ${heliShots.length} ` +
   `(сверху ${heliShots.filter(s => s.air === 1).length}, из-за края экрана ${heliShots.filter(s => s.off).length}), попаданий ${hitsOnMe.get(NPC_ID - K.HELI) || 0}`);
 assert.ok(N.helis.size >= 1 && heliMinD < 12, 'на 4 звёздах прилетает вертолёт и кружит над игроком');
-assert.ok(heliShots.length >= 6 && heliShots.every(s => s.air === 1 && !s.off), 'вертолёт бьёт очередями сверху и только с экрана');
+assert.ok(heliShots.length >= 5 && heliShots.every(s => s.air === 1 && !s.off), 'вертолёт бьёт очередями сверху и только с экрана');
+console.log(`с вертолёта по лестнице спустилось бойцов: ${roped()}`);
+assert.ok(roped() >= 3, 'с вертолёта спускается спецназ');
 const mm = ws.keep.filter(x => x.t === 'mm').pop();
 assert.ok(mm && mm.hl && mm.hl.length >= 1, 'вертолёт виден на радаре');
 
@@ -149,7 +152,7 @@ console.log(`сбиваем ракетами: ракет ${rockets}, верто�
 assert.ok((h2.state === 'fall' || !N.helis.has(h2.id)) && rockets <= 3, 'вертолёт сбивают 2-3 ракеты');
 run(2);
 
-// 6. пять звёзд - танки: едут к игроку, бьют снарядами только с экрана, не больше двух на игрока
+// 6. пять звёзд - танки: едут к игроку, не больше двух на игрока; вражеские танки не стреляют (только давят)
 N.crime(me, STAR_HEAT[5] - me.heat + 1);
 assert.strictEqual(me.stars, 5, 'пять звёзд');
 let tank = null, tankMinD = 1e9, tanksMax = 0;
@@ -163,14 +166,14 @@ run(60, () => {
     tankMinD = Math.min(tankMinD, Math.hypot(v.x - me.x, v.y - me.y));
   }
   tanksMax = Math.max(tanksMax, n);
-  if (shots.slice(s6).filter(s => s.owner === NPC_ID - K.ARMY && s.w === W.LAUNCHER).length >= 2) return false;
+  if (tankMinD < 12 && tanksMax >= 2) return false;
 });
 const shells = shots.slice(s6).filter(s => s.owner === NPC_ID - K.ARMY && s.w === W.LAUNCHER);
 const mm6 = ws.keep.filter(x => x.t === 'mm').pop();
 console.log(`танки: приехал ${!!tank} (прочность ${tank && tank.maxHp}), ближе всего ${tankMinD.toFixed(1)} м, одновременно ${tanksMax}; ` +
   `снарядов ${shells.length}, из-за края экрана ${shells.filter(s => s.off).length}; на радаре ${mm6 && mm6.tk ? mm6.tk.length : 0}`);
 assert.ok(tank && tank.maxHp === KV.VEH.tank.hp && tank.crush, 'на 5 звёздах едет танк');
-assert.ok(shells.length >= 1 && shells.every(s => !s.off), 'танк бьёт снарядами и только с экрана');
+assert.ok(shells.length === 0, 'вражеский танк не стреляет');
 assert.ok(tanksMax <= 2, 'не больше двух танков на одного игрока');
 assert.ok(mm6 && mm6.tk && mm6.tk.length >= 1, 'танк виден на радаре');
 

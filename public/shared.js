@@ -40,24 +40,38 @@
   BLOCKS[B.CAR] = { name: 'машина', hp: 110, bullet: 0.7, blast: 0.8, explode: { r: 4, dmg: 95, tile: 320 }, rubble: G.BURNT };
   BLOCKS[B.BENCH] = { name: 'скамейка', hp: 24, bullet: 1, blast: 1, low: true };
 
-  const W = { FISTS: 0, PISTOL: 1, RIFLE: 2, SHOTGUN: 3, SNIPER: 4, LAUNCHER: 5, FLAMER: 6, SAW: 7 };
+  const W = { FISTS: 0, PISTOL: 1, RIFLE: 2, SHOTGUN: 3, SNIPER: 4, LAUNCHER: 5, FLAMER: 6, SAW: 7,
+    MINIGUN: 8, AUTOSHOT: 9, TRIPLE: 10, UZI: 11, GRENADE: 12, SHIELD: 13 };
   // rate - выстрелов в секунду; speed - м/с; spread - разброс, рад; range - дальность, м;
   // pick - патронов в подобранном оружии; box - в коробке патронов; max - сколько можно носить
   const WEAPONS = [
     { id: 0, name: 'Кулаки', melee: true, dmg: 20, rate: 2.5, range: 1.3, tileDmg: 16 },
     { id: 1, name: 'Пистолет', dmg: 22, rate: 4, speed: 50, spread: 0.035, pellets: 1, range: 32, pick: 24, box: 36, max: 120 },
     { id: 2, name: 'Автомат', dmg: 14, rate: 10, speed: 60, spread: 0.07, pellets: 1, range: 36, pick: 60, box: 90, max: 270 },
-    { id: 3, name: 'Дробовик', dmg: 11, rate: 1.1, speed: 44, spread: 0.3, pellets: 8, range: 14, pick: 10, box: 16, max: 48 },
+    { id: 3, name: 'Дробовик', dmg: 11, rate: 1.1, speed: 44, spread: 0.3, pellets: 8, range: 14, falloff: true, pick: 10, box: 16, max: 48 },
     { id: 4, name: 'Снайперка', dmg: 95, rate: 0.7, speed: 150, spread: 0, pellets: 1, range: 75, pick: 6, box: 10, max: 30, zoom: 1.7 },
     { id: 5, name: 'Гранатомёт', grenade: true, rate: 0.8, speed: 24, spread: 0.01, pellets: 1, range: 28, blast: { r: 3.6, dmg: 110, tile: 560 }, pick: 4, box: 6, max: 16 },
     // огнемёт: короткая струя проходит сквозь людей и поджигает их (burn - сколько секунд горит), деревянное сгорает, машины загораются
     // по людям вдвое сильнее, чем было (17.11.2026); по машинам и клеткам - как раньше (carDmg, fireTile)
     { id: 6, name: 'Огнемёт', flame: true, dmg: 10, carDmg: 20, fireTile: 5, rate: 14, speed: 14, spread: 0.12, pellets: 1, range: 6.5, burn: 3, pick: 120, box: 150, max: 300 },
     // бензопила: держишь - пилит в упор; режет любые стены (кроме границы карты) и машины; патроны - бензин
-    { id: 7, name: 'Бензопила', melee: true, saw: true, dmg: 14, rate: 9, range: 1.5, tileDmg: 75, carDmg: 30, pick: 150, box: 150, max: 300 }
+    { id: 7, name: 'Бензопила', melee: true, saw: true, dmg: 14, rate: 9, range: 1.5, tileDmg: 75, carDmg: 30, pick: 150, box: 150, max: 300 },
+    // оружие 17.11.2026. Миниган: держишь атаку - полсекунды раскручивается (spin), дальше 20 пуль в секунду; встречается редко
+    { id: 8, name: 'Миниган', dmg: 9, rate: 20, speed: 62, spread: 0.09, pellets: 1, range: 34, spin: 0.5, pick: 300, box: 200, max: 500 },
+    // скорострельный дробовик: веер из 7 дробин 3 раза в секунду, бьёт вблизи
+    { id: 9, name: 'Автодробовик', dmg: 9, rate: 3, speed: 44, spread: 0.28, pellets: 7, range: 13, falloff: true, pick: 21, box: 21, max: 63 },
+    // дробовик-тройка: 3 крупные дробины кучно, бьёт вдвое дальше обычного дробовика
+    { id: 10, name: 'Тройка', dmg: 20, rate: 1, speed: 52, spread: 0.07, pellets: 3, range: 28, falloff: true, pick: 10, box: 15, max: 40 },
+    // узи: пистолет-пулемёт, очень быстро и неточно
+    { id: 11, name: 'Узи', dmg: 9, rate: 14, speed: 52, spread: 0.13, pellets: 1, range: 24, pick: 64, box: 96, max: 256 },
+    // граната: летит в точку прицела (не дальше range), отскакивает от стен, через fuse секунд взрывается
+    { id: 12, name: 'Граната', throw: true, rate: 0.8, speed: 0, range: 18, fuse: 2, blast: { r: 3.4, dmg: 100, tile: 380 }, pick: 3, box: 4, max: 10 },
+    // щит: спереди пули в него не проходят (сзади и сбоку - да); с ним атака - из пистолета, если он есть
+    { id: 13, name: 'Щит', shield: true, noAmmo: true, rate: 4, range: 0 }
   ];
   // Что и как часто появляется на карте
-  const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12], [W.FLAMER, 11], [W.SAW, 11]];
+  const WEAPON_WEIGHTS = [[W.PISTOL, 30], [W.RIFLE, 26], [W.SHOTGUN, 20], [W.SNIPER, 12], [W.LAUNCHER, 12], [W.FLAMER, 11], [W.SAW, 11],
+    [W.UZI, 18], [W.AUTOSHOT, 12], [W.TRIPLE, 12], [W.GRENADE, 14], [W.SHIELD, 8], [W.MINIGUN, 4]];
   const PK = { WEAPON: 0, AMMO: 1, HEALTH: 2, ARMOR: 3, SHROOM: 4, STAR: 5 }; // STAR - звезда погашения розыска
   const TRIP = 10;                          // с: сколько действует съеденный гриб
   const ROLL = { SPEED: 7.5, TIME: 1.0 };  // выпрыгнул из машины быстрее SPEED м/с - катится по дороге TIME секунд

@@ -47,7 +47,7 @@ function step(room, sec) {
 const arm = (p, w) => { p.ammo[w] = KV.WEAPONS[w].max || 1; p.cur = w; };
 
 assert.strictEqual(KV.emptyAmmo().length, KV.WEAPONS.length, 'набор оружия на все виды');
-assert.strictEqual(KV.WEAPONS.length, 8, 'восемь видов оружия, включая огнемёт и пилу');
+assert.strictEqual(KV.WEAPONS.length, 14, 'четырнадцать видов оружия: с огнемётом, пилой, миниганом, дробовиками, узи, гранатами и щитом');
 
 // 1. огнемёт: человек загорается и горит дальше
 {

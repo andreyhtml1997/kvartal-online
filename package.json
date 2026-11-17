@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/mapgen.test.js && node test/sim.test.js && node test/carphys.test.js && node test/fire.test.js && node test/weapons.test.js && node test/npcs.test.js && node test/heavy.test.js && node test/rebuild.test.js && node test/blast.test.js && node test/aim.test.js && node test/perks.test.js"
+    "test": "node test/mapgen.test.js && node test/sim.test.js && node test/carphys.test.js && node test/fire.test.js && node test/weapons.test.js && node test/npcs.test.js && node test/heavy.test.js && node test/rebuild.test.js && node test/blast.test.js && node test/aim.test.js && node test/perks.test.js && node test/arsenal.test.js"
   },
   "engines": {
     "node": ">=18"

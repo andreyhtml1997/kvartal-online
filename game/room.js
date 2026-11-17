@@ -23,6 +23,7 @@ const HELI_BULLET = 1;          // пули по вертолёту - доля �
 const TANK_RELOAD = 1.6;        // с между снарядами танка игрока
 const BURN_DMG = 6;             // урон горящему игроку за 0.25 с (огнемёт вдвое сильнее - 17.11.2026; было 3)
 const MED_EVERY = [20, 28];     // с: отдельные аптечки сверх обычных припасов - аптечек вдвое больше (17.11.2026)
+const GRENADE_DRAG = 2.2;       // 1/с: брошенная граната тормозит и за ~2 с долетает до точки прицела
 const REBUILD_DELAY = 60;       // с без урона - и разрушенный дом начинает чиниться сам
 const REBUILD_EVERY = 9;        // тактов между кирпичами одного дома (0.3 с)
 const PICKUP_LIFE = 120;        // с
@@ -47,7 +48,8 @@ function emptyEvents() {
     en: [], ex: [], hn: [], ck: [], cr: [], vf: [], vx: [], fl: [], bo: [], tf: [], tfx: [], vc: [],
     nh: [], nk: [], rv: [], ws: [], // жители: попадание, смерть, вылечен; звёзды розыска игрока
     hf: [], hx: [], // вертолёт сбит (падает); вертолёт исчез (разбился или улетел)
-    rr: [] // дом снова целый - вернулась крыша
+    rr: [], // дом снова целый - вернулась крыша
+    gt: [] // брошена граната (звук)
   };
 }
 
@@ -63,6 +65,8 @@ class Room {
     this.pickups = new Map();
     this.nextPickup = 1;
     this.pending = [];            // отложенные взрывы (цепные реакции)
+    this.grenades = [];           // брошенные гранаты: летят, отскакивают от стен, взрываются
+    this.nextGrenade = 1;
     this.recentShots = [];        // куда идут боты на звук
     this.time = 0;
     this.tickNo = 0;
@@ -224,7 +228,7 @@ class Room {
       case 'i': this.onInput(p, msg); break;
       case 'w': {
         const i = msg.i | 0;
-        if (i >= 0 && i < WEAPONS.length && (i === W.FISTS || p.ammo[i] > 0)) p.cur = i;
+        if (i >= 0 && i < WEAPONS.length && (i === W.FISTS || p.ammo[i] > 0 || (WEAPONS[i].noAmmo && p.ammo[i] >= 0))) { p.cur = i; p.spinT = 0; }
         break;
       }
       case 'enter': if (p.alive && !p.vehicle) this.vehicles.enter(p, msg.id | 0); break;
@@ -256,7 +260,7 @@ class Room {
       case 'dbg':
         // только для автотестов на своём компьютере: на хостинге переменная KV_DEBUG не задана
         if (process.env.KV_DEBUG !== '1') break;
-        if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; }
+        if (msg.give) { for (const w of WEAPONS) if (w.max) p.ammo[w.id] = w.max; else if (w.noAmmo) p.ammo[w.id] = 0; }
         if (msg.god) p.prot = this.time + 600;
         if (msg.immortal) p.godUntil = this.time + 600; // не снимается стрельбой (для проверок под огнём)
         if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
@@ -394,6 +398,7 @@ class Room {
     this.updateStamina();
     for (const p of this.players.values()) this.updateFiring(p);
     this.updateBullets();
+    this.updateGrenades();
     this.updateBurning();
     this.updateTileFires();
     this.updatePending();
@@ -424,22 +429,25 @@ class Room {
 
   // ---------- стрельба ----------
   bestWeapon(p) {
-    for (const w of [W.RIFLE, W.SHOTGUN, W.FLAMER, W.SNIPER, W.PISTOL, W.LAUNCHER, W.SAW]) if (p.ammo[w] > 0) return w;
+    for (const w of [W.MINIGUN, W.RIFLE, W.AUTOSHOT, W.SHOTGUN, W.TRIPLE, W.UZI, W.FLAMER, W.SNIPER, W.PISTOL, W.LAUNCHER, W.GRENADE, W.SAW]) if (p.ammo[w] > 0) return w;
     return W.FISTS;
   }
 
   updateFiring(p) {
     if (p.fireLatch && this.time - p.latchAt > PRESS_LATCH) p.fireLatch = false; // нажатие давнее - не стреляем с опозданием
+    // миниган раскручивается, пока зажата атака; отпустил - стволы останавливаются
+    if (WEAPONS[p.cur].spin) p.spinT = p.alive && p.fire ? Math.min(1, (p.spinT || 0) + DT) : Math.max(0, (p.spinT || 0) - 2 * DT);
     if (!p.alive || !(p.fire || p.fireLatch)) return;
     if (this.time < p.nextShot) return;
     if (this.time < p.rollUntil) { p.fireLatch = false; return; } // катится после прыжка из машины
     // на рывке не стреляют
     if (p.sprint && !p.vehicle && this.time - p.lastMoveTime < 0.25 && p.stamina > 0) { p.fireLatch = false; return; }
-    if (p.cur !== W.FISTS && !(p.ammo[p.cur] > 0)) { p.cur = this.bestWeapon(p); p.fireLatch = false; return; }
+    if (p.cur !== W.FISTS && !WEAPONS[p.cur].noAmmo && !(p.ammo[p.cur] > 0)) { p.cur = this.bestWeapon(p); p.fireLatch = false; return; }
     // в танке атака - снаряд из башни туда, куда целишься; оружие в руках при этом не тратится
     const tank = p.vehicle ? this.vehicles.list.get(p.vehicle) : null;
     if (tank && tank.kind === 'tank') {
       p.fireLatch = false;
+      if (p.isBot) return; // из танка стреляют только игроки
       p.nextShot = this.time + TANK_RELOAD;
       p.prot = 0;
       p.shotAt = this.time;
@@ -450,10 +458,16 @@ class Room {
       this.npcs.noise(p.x, p.y, 16);
       return;
     }
-    const w = WEAPONS[p.cur];
+    // со щитом стреляешь только из пистолета, если он есть (wi - чьи патроны тратятся)
+    let wi = p.cur;
+    if (WEAPONS[p.cur].shield) { if (!(p.ammo[W.PISTOL] > 0)) { p.fireLatch = false; return; } wi = W.PISTOL; }
+    const w = WEAPONS[wi];
+    if (w.spin && (p.spinT || 0) < w.spin) return; // миниган ещё раскручивается
     if (w.melee && p.vehicle) { p.fireLatch = false; return; } // из машины кулаками не бьют
     p.fireLatch = false;
-    p.nextShot = this.time + 1 / w.rate;
+    // при непрерывной стрельбе перезарядка считается от прошлого выстрела: иначе темп обрезается тактами
+    // (30 в секунду - быстрее 15 выстрелов в секунду не выходило: миниган 20 -> 15, узи 14 -> 10)
+    p.nextShot = (this.time - p.nextShot < DT ? p.nextShot : this.time) + 1 / w.rate;
     p.prot = 0; // стрельба снимает защиту после появления
     p.shotAt = this.time;
     if (!p.isBot && w.id !== W.FISTS) this.recentShots.push({ x: p.x, y: p.y, t: this.time });
@@ -464,13 +478,65 @@ class Room {
       this.melee(p, w);
       return;
     }
-    p.ammo[p.cur]--;
+    if (w.throw) {
+      p.ammo[wi]--;
+      this.throwGrenade(p, w);
+      if (p.ammo[wi] <= 0) p.cur = this.bestWeapon(p);
+      return;
+    }
+    p.ammo[wi]--;
     // из машины пуля вылетает из окна, огонь - из сопла огнемёта
     const off = p.vehicle ? 0.6 : w.flame ? 0.75 : 0;
     // целится в вертолёт - стреляет вверх: стены и люди внизу пуле не мешают
     const up = !w.flame && this.npcs.aimHeli(p) ? 2 : 0;
     this.spawnShot(p.x + Math.cos(p.a) * off, p.y + Math.sin(p.a) * off, p.a, w, p.id, p.vehicle || 0, p.aimD, 0, up);
-    if (p.ammo[p.cur] <= 0) p.cur = this.bestWeapon(p);
+    if (wi === p.cur && p.ammo[wi] <= 0) p.cur = this.bestWeapon(p);
+  }
+
+  // Граната: летит в точку прицела (не дальше 18 м), отскакивает от стен, через 2 с взрывается
+  throwGrenade(p, w) {
+    const d = Math.max(2, Math.min(w.range, p.aimD || 10)), c = Math.cos(p.a), s = Math.sin(p.a);
+    const g = { id: this.nextGrenade++, x: p.x + c * 0.5, y: p.y + s * 0.5, vx: c * d * GRENADE_DRAG, vy: s * d * GRENADE_DRAG, t: w.fuse, owner: p.id };
+    if (!this.grenadeFree(g.x, g.y)) { g.x = p.x; g.y = p.y; }
+    this.grenades.push(g);
+    this.ev.gt.push([g.id, r2(g.x), r2(g.y), p.id]);
+  }
+  // граната пролетает над низким (заборы, скамейки), о стены отскакивает
+  grenadeFree(x, y) {
+    const m = this.map, r = 0.15;
+    for (let ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++) {
+      for (let tx = Math.floor(x - r); tx <= Math.floor(x + r); tx++) {
+        if (tx < 0 || ty < 0 || tx >= m.w || ty >= m.h) return false;
+        const t = m.block[ty * m.w + tx];
+        if (t !== B.NONE && !(BLOCKS[t] && BLOCKS[t].low)) return false;
+      }
+    }
+    return true;
+  }
+  updateGrenades() {
+    if (!this.grenades.length) return;
+    const damp = Math.exp(-GRENADE_DRAG * DT);
+    for (const g of this.grenades) {
+      const n = Math.max(1, Math.ceil((Math.hypot(g.vx, g.vy) * DT) / 0.2));
+      for (let i = 0; i < n; i++) {
+        const nx = g.x + (g.vx * DT) / n, ny = g.y + (g.vy * DT) / n;
+        if (this.grenadeFree(nx, ny)) { g.x = nx; g.y = ny; continue; }
+        // упёрлась - отскок по той оси, по которой упёрлась, с потерей скорости
+        if (this.grenadeFree(nx, g.y)) { g.x = nx; g.vy = -g.vy * 0.5; }
+        else if (this.grenadeFree(g.x, ny)) { g.y = ny; g.vx = -g.vx * 0.5; }
+        else { g.vx = -g.vx * 0.5; g.vy = -g.vy * 0.5; }
+      }
+      g.vx *= damp; g.vy *= damp;
+      g.t -= DT;
+      if (g.t <= 0) { g.dead = true; this.explode(g.x, g.y, WEAPONS[W.GRENADE].blast, g.owner, W.GRENADE); }
+    }
+    this.grenades = this.grenades.filter(g => !g.dead);
+  }
+  // щит: пуля спереди (±60° от взгляда) в него упирается; сзади и сбоку - попадает
+  shieldBlocks(p, b) {
+    if (p.vehicle || !WEAPONS[p.cur].shield) return false;
+    const from = Math.atan2(-b.dy, -b.dx);
+    return Math.abs(Math.atan2(Math.sin(from - p.a), Math.cos(from - p.a))) < Math.PI / 3;
   }
 
   // Пули одного выстрела (у дробовика - веер). ownerId - игрок; у жителей - отрицательный (-100 - вид), npcId - кто именно.
@@ -569,8 +635,10 @@ class Room {
         b.dead = true;
         if (w.grenade) { this.ev.be.push([b.id, r2(hx), r2(hy), 3]); this.explode(hx, hy, w.blast, b.owner, w.id); continue; }
         const travelled = b.range - b.left + tBest;
-        const fall = b.w === W.SHOTGUN ? 1 - 0.5 * Math.min(1, travelled / b.range) : 1;
-        if (target) {
+        const fall = WEAPONS[b.w].falloff ? 1 - 0.5 * Math.min(1, travelled / b.range) : 1;
+        if (target && this.shieldBlocks(target, b)) {
+          this.ev.be.push([b.id, r2(hx), r2(hy), 4]); // пуля звякнула о щит
+        } else if (target) {
           this.ev.be.push([b.id, r2(hx), r2(hy), 2]);
           this.damage(target, w.dmg * fall, b.owner, w.id, hx, hy);
         } else if (npcT) {
@@ -714,6 +782,7 @@ class Room {
     if (a && a !== t) a.kills++;
     this.ev.k.push([attackerId || 0, t.id, weaponId]);
     if (t.cur !== W.FISTS && t.ammo[t.cur] > 0) this.addPickup(PK.WEAPON, t.cur, t.x, t.y, t.ammo[t.cur]);
+    else if (WEAPONS[t.cur].noAmmo && t.ammo[t.cur] >= 0) this.addPickup(PK.WEAPON, t.cur, t.x, t.y, 0); // щит падает на землю
     this.sbDirty = true;
   }
 
@@ -911,7 +980,7 @@ class Room {
     if (r < 0.42) { const w = this.randomWeapon(); this.addPickup(PK.WEAPON, w, x, y, WEAPONS[w].pick); return; }
     if (r < 0.64) {
       // патроны - к тому оружию, которое у разбившего уже есть
-      const owned = p ? WEAPONS.filter(w => w.id && p.ammo[w.id] >= 0).map(w => w.id) : [];
+      const owned = p ? WEAPONS.filter(w => w.id && !w.noAmmo && p.ammo[w.id] >= 0).map(w => w.id) : [];
       if (owned.length) { const w = owned[Math.floor(Math.random() * owned.length)]; this.addPickup(PK.AMMO, w, x, y, WEAPONS[w].box); }
       else { const w = this.randomWeapon(); this.addPickup(PK.WEAPON, w, x, y, WEAPONS[w].pick); }
       return;
@@ -1061,7 +1130,12 @@ class Room {
   }
 
   tryPick(p, pk) {
-    if (pk.kind === PK.WEAPON) {
+    if (pk.kind === PK.WEAPON && WEAPONS[pk.w].noAmmo) {
+      // щит: берут люди (боты им не пользуются), второй не нужен
+      if (p.isBot || p.ammo[pk.w] >= 0) return false;
+      p.ammo[pk.w] = 0;
+      if (p.cur === W.FISTS) p.cur = pk.w;
+    } else if (pk.kind === PK.WEAPON) {
       const w = WEAPONS[pk.w];
       const had = p.ammo[pk.w] >= 0;
       if (had && p.ammo[pk.w] >= w.max) return false;
@@ -1121,7 +1195,9 @@ class Room {
       }
       const me = [Math.max(0, Math.ceil(p.hp)), Math.ceil(p.ar), p.cur, p.ammo, p.alive ? 0 : r2(Math.max(0, p.respawnAt - this.time)),
         p.alive ? 1 : 0, Math.round(p.stamina), p.vehicle || 0, p.stars || 0];
-      this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), h: this.npcs.heliSnap(p, vw + 15, vh + 15), me });
+      const gr = [];
+      for (const g of this.grenades) if (Math.abs(g.x - p.x) < vw && Math.abs(g.y - p.y) < vh) gr.push([g.id, r2(g.x), r2(g.y), g.t < 0.6 ? 1 : 0]);
+      this.send(p, { t: 's', ts, p: list, c, n: this.npcs.snapFor(p, vw, vh), h: this.npcs.heliSnap(p, vw + 15, vh + 15), gr, me });
     }
   }
 

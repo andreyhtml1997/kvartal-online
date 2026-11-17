@@ -45,7 +45,8 @@
     view: { tp: 24, ox: 0, oy: 0, hw: 20, hh: 12 }, tp: 0, zoomR: KV.VIEW_RADIUS, shake: 0, hurtFlash: 0, frame: 0, inGameSince: 0,
     rbase: null, rctx: null, mmNext: 0, hudNext: 0, gearOpen: false, bigOpen: false, srv: null,
     humans: [], botsOn: false, pushAcc: new Map(), tileFires: new Map(), trip: null, phantoms: [], flameSndAt: 0, flameSndOther: 0, flameHeard: null, tiresAt: 0, peds: new Map(), police: [], ambs: [], stars: 0, pedPainAt: 0,
-    helis: new Map(), tanks: [], helisMM: [] // вертолёты рядом; танки и вертолёты на радаре
+    helis: new Map(), tanks: [], helisMM: [], // вертолёты рядом; танки и вертолёты на радаре
+    grenades: new Map() // брошенные гранаты рядом
   };
 
   function makePlayer(id) {
@@ -220,7 +221,9 @@
     }
     const PAIN = ['pain1', 'pain2', 'pain3', 'pain4', 'pain5', 'pain6', 'pain7', 'pain8', 'pain9'];
     const DEATH = ['death1', 'death2', 'death3'];
-    const SHOT = [null, 'pistol', 'rifle', 'shotgun', 'sniper', 'launcher'];
+    // звук выстрела: файл, громкость, высота (новое оружие - те же записи, выше или ниже тоном)
+    const SHOTS = { 1: ['pistol', 0.65, 1], 2: ['rifle', 0.5, 1], 3: ['shotgun', 0.8, 1], 4: ['sniper', 0.8, 1], 5: ['launcher', 0.8, 1],
+      8: ['rifle', 0.32, 1.22], 9: ['shotgun', 0.7, 1.12], 10: ['shotgun', 0.85, 0.8], 11: ['pistol', 0.42, 1.35] };
     const pick = a => a[Math.floor(Math.random() * a.length)];
     // короткий звук из файла; false - файл ещё не загружен (тогда звучит синтез)
     function sample(name, o) {
@@ -287,7 +290,9 @@
       ctx() { return ac; },
       loadedCount() { return FILES.filter(f => buf[f.replace(/\.wav$/, '')]).length; }, // только файлы (винт - синтез)
       shot(w, x, y) {
-        if (SHOT[w] && sample(SHOT[w], { x, y, gain: w === W.RIFLE ? 0.5 : w === W.PISTOL ? 0.65 : 0.8 })) return;
+        const e = SHOTS[w];
+        if (e && sample(e[0], { x, y, gain: e[1], rate: e[2] * (0.95 + Math.random() * 0.1) })) return;
+        w = w === W.UZI ? W.PISTOL : w === W.MINIGUN ? W.RIFLE : w === W.AUTOSHOT || w === W.TRIPLE ? W.SHOTGUN : w;
         if (w === W.PISTOL) { burst({ dur: 0.12, freq: 1800, q: 0.8, gain: 0.45, x, y, sweep: 600 }); tone({ freq: 170, dur: 0.06, gain: 0.2, type: 'triangle', slide: 60, x, y }); }
         else if (w === W.RIFLE) burst({ dur: 0.08, freq: 2200, q: 0.9, gain: 0.35, x, y, sweep: 700 });
         else if (w === W.SHOTGUN) { burst({ dur: 0.3, freq: 1100, q: 0.6, gain: 0.75, x, y, sweep: 180, type: 'lowpass' }); tone({ freq: 120, dur: 0.12, gain: 0.35, slide: 40, x, y }); }
@@ -302,6 +307,7 @@
       },
       glass(x, y) { if (sample('glass', { x, y, gain: 0.6 })) return; burst({ dur: 0.25, freq: 5000, q: 2, gain: 0.3, type: 'highpass', x, y }); tone({ freq: 2400, dur: 0.15, gain: 0.06, type: 'triangle', x, y }); },
       wood(x, y) { burst({ dur: 0.18, freq: 700, q: 1.5, gain: 0.35, x, y }); },
+      toss(x, y) { burst({ dur: 0.22, freq: 900, q: 1.2, gain: 0.25, x, y, sweep: 300 }); }, // бросок гранаты
       // дом чинится: глухой стук кирпича, у стекла - звонкий; не чаще 7 раз в секунду
       place(x, y, glass) {
         const t = performance.now();
@@ -1042,6 +1048,20 @@
       ctx.fillRect(-3.3, -0.14, 2.8, 0.28); ctx.fillRect(-2.75, -0.6, 0.22, 1.2);
       ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.beginPath(); ctx.arc(0.05, 0, 2.5, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
+      // верёвочная лестница до земли (туда, где тень): по ней спускается спецназ
+      if (h.fl & 8) {
+        const ex = h.rx + so * 0.75, ey = h.ry + so, sw = Math.sin(now / 300) * 0.15;
+        const len = Math.hypot(ex - h.rx, ey - h.ry) || 1, px = -(ey - h.ry) / len * 0.18, py = (ex - h.rx) / len * 0.18;
+        ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 0.05;
+        ctx.beginPath();
+        ctx.moveTo(h.rx + px, h.ry + py); ctx.quadraticCurveTo((h.rx + ex) / 2 + px + sw, (h.ry + ey) / 2 + py, ex + px, ey + py);
+        ctx.moveTo(h.rx - px, h.ry - py); ctx.quadraticCurveTo((h.rx + ex) / 2 - px + sw, (h.ry + ey) / 2 - py, ex - px, ey - py);
+        for (let i = 1; i < 7; i++) {
+          const k = i / 7, cx = h.rx + (ex - h.rx) * k + sw * Math.sin(k * Math.PI), cy = h.ry + (ey - h.ry) * k;
+          ctx.moveTo(cx + px, cy + py); ctx.lineTo(cx - px, cy - py);
+        }
+        ctx.stroke();
+      }
       // корпус
       ctx.save();
       ctx.translate(h.rx, h.ry);
@@ -1178,7 +1198,13 @@
     { len: 1.0, wid: 0.1, col: '#2c3a2c' },
     { len: 0.84, wid: 0.2, col: '#4a5a3a' },
     { len: 0.8, wid: 0.16, col: '#7a2a1c' },
-    { len: 1.0, wid: 0.18, col: '#e07a1f' }];
+    { len: 1.0, wid: 0.18, col: '#e07a1f' },
+    { len: 0.95, wid: 0.24, col: '#3a3d42' },   // миниган
+    { len: 0.66, wid: 0.14, col: '#2d2f33' },   // автодробовик
+    { len: 0.8, wid: 0.15, col: '#6b4a2a' },    // тройка
+    { len: 0.42, wid: 0.12, col: '#1f2124' },   // узи
+    { len: 0.24, wid: 0.2, col: '#3d5a2a' },    // граната
+    { len: 0.36, wid: 0.11, col: '#262626' }];  // щит: в руке пистолет
   function drawGunShape(g, w) {
     const s = GUN[w];
     if (!s) return;
@@ -1195,9 +1221,30 @@
       for (let i = 0.34; i < s.len - 0.05; i += 0.09) { g.fillRect(i, -0.1, 0.04, 0.03); g.fillRect(i, 0.07, 0.04, 0.03); } // цепь
       return;
     }
+    if (w === W.MINIGUN) {
+      g.fillStyle = s.col; g.fillRect(-0.05, -0.14, 0.34, 0.28);                       // корпус
+      g.fillStyle = '#5c6168';
+      const sp = (performance.now() / 40) % 3;                                         // стволы крутятся
+      for (let i = 0; i < 3; i++) g.fillRect(0.29, -0.11 + ((i + sp) % 3) * 0.08, s.len - 0.32, 0.05);
+      g.fillStyle = '#25272b'; g.fillRect(s.len - 0.06, -0.13, 0.06, 0.26);
+      return;
+    }
+    if (w === W.GRENADE) {
+      g.fillStyle = s.col; g.beginPath(); g.arc(0.12, 0, 0.1, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#9aa0a6'; g.fillRect(0.06, -0.14, 0.07, 0.06);
+      return;
+    }
+    if (w === W.TRIPLE) {
+      g.fillStyle = s.col; g.fillRect(0, -0.07, 0.3, 0.14);
+      g.fillStyle = '#2b2b2b';
+      for (let i = -1; i <= 1; i++) g.fillRect(0.3, i * 0.055 - 0.02, s.len - 0.3, 0.04);
+      return;
+    }
     g.fillStyle = s.col;
     g.fillRect(0, -s.wid / 2, s.len, s.wid);
     g.fillStyle = 'rgba(0,0,0,0.45)';
+    if (w === W.UZI) g.fillRect(0.12, s.wid / 2, 0.07, 0.17);
+    if (w === W.AUTOSHOT) { g.beginPath(); g.arc(0.26, s.wid / 2 + 0.05, 0.1, 0, Math.PI * 2); g.fill(); }
     if (w === W.RIFLE) g.fillRect(0.3, s.wid / 2, 0.1, 0.14);
     if (w === W.SNIPER) g.fillRect(0.25, -0.13, 0.32, 0.08);
     if (w === W.SHOTGUN) g.fillRect(0.38, -s.wid / 2 - 0.03, 0.18, s.wid + 0.06);
@@ -1224,7 +1271,11 @@
     ctx.beginPath(); ctx.arc(0, 0, 0.75, 0, Math.PI * 2); ctx.fill();
     ctx.translate(0, bob);
     ctx.scale(1.25, 1.25);
-    if (pk.kind === PK.WEAPON) {
+    if (pk.kind === PK.WEAPON && pk.w === W.SHIELD) {
+      ctx.fillStyle = '#1f2b4d'; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.05;
+      ctx.beginPath(); ctx.moveTo(-0.26, -0.3); ctx.lineTo(0.26, -0.3); ctx.lineTo(0.26, 0.08); ctx.quadraticCurveTo(0.26, 0.28, 0, 0.36); ctx.quadraticCurveTo(-0.26, 0.28, -0.26, 0.08); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(150,200,255,0.7)'; ctx.fillRect(-0.15, -0.2, 0.3, 0.08);
+    } else if (pk.kind === PK.WEAPON) {
       ctx.rotate(-0.5);
       ctx.translate(-GUN[pk.w].len / 2, 0);
       ctx.strokeStyle = 'rgba(255,255,255,0.9)';
@@ -1298,6 +1349,12 @@
     ctx.stroke();
     ctx.fillStyle = '#2b1d14';
     ctx.beginPath(); ctx.arc(0.02, 0, 0.19, 0, Math.PI * 2); ctx.fill();
+    if (w === W.SHIELD) {
+      // щит перед собой, с окошком
+      ctx.fillStyle = '#1f2b4d'; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.04;
+      ctx.beginPath(); ctx.moveTo(0.36, -0.47); ctx.quadraticCurveTo(0.52, 0, 0.36, 0.47); ctx.lineTo(0.48, 0.47); ctx.quadraticCurveTo(0.64, 0, 0.48, -0.47); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(150,200,255,0.6)'; ctx.fillRect(0.5, -0.13, 0.05, 0.26);
+    }
     ctx.restore();
   }
 
@@ -1336,9 +1393,9 @@
         ctx.beginPath(); ctx.arc(x, y, 0.15, 0, Math.PI * 2); ctx.fill();
         if (Math.random() < 0.6) spawn('smoke', x, y, 1, '#888', 0.3, 0.7, 0.12);
       } else {
-        const tail = Math.min(d, b.w === W.SNIPER ? 3 : 1);
-        ctx.strokeStyle = b.w === W.SNIPER ? 'rgba(255,255,255,0.9)' : 'rgba(255,233,160,0.95)';
-        ctx.lineWidth = b.w === W.SNIPER ? 0.06 : 0.07;
+        const tail = Math.min(d, b.w === W.SNIPER ? 3 : b.w === W.MINIGUN ? 0.7 : 1);
+        ctx.strokeStyle = b.w === W.SNIPER ? 'rgba(255,255,255,0.9)' : b.w === W.TRIPLE ? 'rgba(255,190,90,0.95)' : 'rgba(255,233,160,0.95)';
+        ctx.lineWidth = b.w === W.SNIPER ? 0.06 : b.w === W.TRIPLE ? 0.11 : b.w === W.MINIGUN ? 0.05 : 0.07;
         ctx.beginPath(); ctx.moveTo(x - b.dx * tail, y - b.dy * tail); ctx.lineTo(x, y); ctx.stroke();
       }
     }
@@ -1549,7 +1606,8 @@
     if (typing() || !S.inGame) return;
     if (e.repeat && (e.code === 'KeyF' || e.code === 'KeyM' || e.code === 'KeyH')) return;
     input.keys.add(e.code);
-    if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)); if (n >= 1 && n <= WEAPONS.length) selectWeapon(n - 1); }
+    // 1-9, 0 - оружие по порядку на панели (на панели только то, что есть)
+    if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)) || 10; const o = ownedList(); if (o[n - 1] !== undefined) selectWeapon(o[n - 1]); }
     else if (e.code === 'KeyQ') cycleWeapon(-1);
     else if (e.code === 'KeyE') cycleWeapon(1);
     else if (e.code === 'KeyF') carAction();
@@ -1795,9 +1853,12 @@
     else S.me.sprinting = false;
   }
 
+  // есть ли у меня оружие (щит - без патронов: есть, если подобран)
+  const hasW = i => i === W.FISTS || (WEAPONS[i].noAmmo ? S.me.ammo[i] >= 0 : S.me.ammo[i] > 0);
+  const ownedList = () => WEAPONS.map(w => w.id).filter(hasW);
   function selectWeapon(i) {
     if (!S.me.alive || i < 0 || i >= WEAPONS.length) return;
-    if (i !== W.FISTS && !(S.me.ammo[i] > 0)) return;
+    if (!hasW(i)) return;
     if (S.me.cur === i) return;
     S.me.cur = i;
     S.me.switchAt = performance.now();
@@ -1808,7 +1869,7 @@
   }
   function cycleWeapon(dir) {
     // по кругу по всему оружию, что есть (вместе с огнемётом и пилой)
-    const owned = WEAPONS.map(w => w.id).filter(i => i === W.FISTS || S.me.ammo[i] > 0);
+    const owned = ownedList();
     const idx = owned.indexOf(S.me.cur);
     selectWeapon(owned[(idx + dir + owned.length) % owned.length]);
   }
@@ -1935,7 +1996,7 @@
     S.particles.length = 0; S.effects.length = 0; S.decals.length = 0; S.hitMarks.length = 0; S.npcs.length = 0; S.blasts.length = 0; S.pings = [];
     S.tileFires.clear();
     S.peds.clear(); S.police = []; S.ambs = []; S.stars = 0; syncStars(false);
-    S.helis.clear(); S.tanks = []; S.helisMM = [];
+    S.helis.clear(); S.tanks = []; S.helisMM = []; S.grenades.clear();
     endTrip();
     resetMe();
     S.clockOff = null;
@@ -2025,6 +2086,12 @@
       if (last && Math.hypot(last[1] - x, last[2] - y) > 25) h.snaps.length = 0;
       h.snaps.push([m.ts, x, y, a]);
       if (h.snaps.length > 10) h.snaps.shift();
+    }
+    // гранаты: [номер, x, y, вот-вот взорвётся]
+    if (m.gr) for (const [id, x, y, blink] of m.gr) {
+      let g = S.grenades.get(id);
+      if (!g) { g = { id, rx: x, ry: y }; S.grenades.set(id, g); }
+      g.tx = x; g.ty = y; g.blink = blink; g.seen = now;
     }
     const [hp, ar, cur, ammo, respawnIn, alive, stamina, veh, stars] = m.me;
     if ((stars || 0) !== S.stars) {
@@ -2171,6 +2238,7 @@
     // вертолёт: сбит - падает, крутясь; исчез - разбился (взрыв приходит отдельно) или улетел
     if (m.hf) for (const id of m.hf) { const h = S.helis.get(id); if (h && !h.fallAt) h.fallAt = now; feed('Полицейский вертолёт сбит!'); }
     if (m.hx) for (const id of m.hx) S.helis.delete(id);
+    if (m.gt) for (const [, x, y, owner] of m.gt) if (owner !== S.myId) Sound.toss(x, y);
     // деревянное горит
     if (m.tf) for (const k of m.tf) S.tileFires.set(k, now + 9000);
     if (m.tfx) for (const k of m.tfx) S.tileFires.delete(k);
@@ -2235,15 +2303,36 @@
     setTimeout(() => { li.style.opacity = '0'; setTimeout(() => li.remove(), 450); }, 6000);
   }
 
+  // Значки оружия (32x16): силуэт сбоку, детали - полупрозрачным чёрным
   const ICONS = [
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M9 4h13a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H12a3 3 0 0 1-3-3z"/><path stroke="#000" stroke-opacity=".4" stroke-width="1.2" d="M14 4.5v4M18 4.5v4M22 4.5v4"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M5 3h21v5H15l-1.6 7H9l1.6-7H5z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 5h29v3h-9l-.5 6h-3.5l.5-6h-6l-3 5H4l2.5-5H1z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 5h30v3H12l-3 6H5l2.4-6H1zm16 3h7v3h-7z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 7h30v2H11l-3 5H4l2.4-5H1zm11-5h9v3h-9z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h27v7H2zm7 7h4v4H9zm20-6h2v5h-2z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h7v9H2zM9 7h13v3H9zM22 6h3v5h-3z"/><path fill="#ff7a1a" d="M25 8.5c2-3.5 4.5-2.5 6-1-1.2 0-2 1-1.5 2 1 1.2-1.2 3.4-4.5 2z"/></svg>',
-    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M2 4h9v9H2z"/><path fill="currentColor" opacity=".7" d="M11 6h16a3 3 0 0 1 0 6H11z"/><path stroke="currentColor" stroke-width="1.3" d="M13 6V4.5M17 6V4.5M21 6V4.5M25 6V4.5M13 12v1.5M17 12v1.5M21 12v1.5M25 12v1.5"/></svg>'
+    // кулак
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M9 4.5C9 3.1 10.1 2 11.5 2h8.2C21.5 2 23 3.5 23 5.3v5.2c0 1.9-1.6 3.5-3.5 3.5h-6.8C10.7 14 9 12.3 9 10.3z"/><path fill="none" stroke="#000" stroke-opacity=".4" stroke-width="1.1" stroke-linecap="round" d="M13 2.6v4.2M16.5 2.4v4.4M20 2.6v4.2M9.6 9.2h5.4"/></svg>',
+    // пистолет
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M5 3h20l1.2 1.3H27V7H14.5l-.6 2.6c-.3 1.2-1.3 2-2.5 2h-.6L9.6 15H5.4l2.2-6H5z"/><path fill="#000" fill-opacity=".4" d="M11 7.4h2.8l-.5 2.2h-2.6zM6 4.2h18v1H6z"/></svg>',
+    // автомат с изогнутым магазином
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 6h4l2-1.5h12V3.2h2V4.5h8V6h2v1.8h-9.5l-.8 1.2h-2.4l1.6 5.6-2.6.9-1.9-6.5H11.5L9.8 11H6l1.4-3.2H1z"/><path fill="#000" fill-opacity=".35" d="M8 5.6h10v1H8z"/></svg>',
+    // помповый дробовик
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 6.5l6-1.5h4.5V4h19.5v2.4H13l-.6 1.2H8.4L6.6 11.5H2.6l1.9-3.9H1z"/><rect x="17" y="6.2" width="7.5" height="2.8" rx="1" fill="currentColor"/><path fill="#000" fill-opacity=".4" d="M18.6 6.6h.9v2h-.9zM20.6 6.6h.9v2h-.9zM22.6 6.6h.9v2h-.9z"/></svg>',
+    // снайперка с прицелом
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 7.5l5-1.4h4.5V5.6H31v1.6H12.5l-.8 1.4H8.6L7 12H3.2l1.8-3.4H1z"/><rect x="12" y="2" width="9.5" height="2.8" rx="1.4" fill="currentColor"/><path fill="currentColor" d="M14 4.6h1.2v1.2H14zM18.4 4.6h1.2v1.2h-1.2z"/><path fill="#000" fill-opacity=".4" d="M20.2 2.6h.9v1.6h-.9z"/></svg>',
+    // гранатомёт
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M3 6h17v3.2H3z"/><path fill="currentColor" d="M20 4.8l4.4-1.6c2.5 0 4.6 2 4.6 4.4s-2.1 4.4-4.6 4.4L20 10.4z"/><path fill="currentColor" d="M8 9.2h2.2v3.8H8zM13 9.2h2.2v2.6H13z"/><path fill="#000" fill-opacity=".35" d="M1 5.2h2.2v5H1zM24 4.2h1v6.8h-1z"/></svg>',
+    // огнемёт
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><rect x="2" y="3.2" width="7" height="9.6" rx="2.4" fill="currentColor"/><path fill="currentColor" d="M9 7h12v2.6H9zM21 6h3v4.6h-3z"/><path fill="#000" fill-opacity=".35" d="M3.2 5h4.6v1.2H3.2z"/><path fill="#ff7a1a" d="M24.5 8.3c1.8-3.2 4.3-2.6 6-1.2-1.2.1-1.9 1-1.4 2 .9 1.3-1.4 3.5-4.6 1.9z"/></svg>',
+    // бензопила
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><rect x="2" y="3.5" width="9" height="9" rx="2" fill="currentColor"/><path fill="currentColor" opacity=".75" d="M11 5.6h15.5a3 3 0 0 1 0 6H11z"/><path stroke="currentColor" stroke-width="1.3" d="M13 5.6V4.2M17 5.6V4.2M21 5.6V4.2M25 5.6V4.2M13 11.6V13M17 11.6V13M21 11.6V13M25 11.6V13"/><path fill="#000" fill-opacity=".35" d="M3.5 5h6v1.4h-6z"/></svg>',
+    // миниган: связка стволов
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><rect x="2" y="4" width="9.5" height="8" rx="1.5" fill="currentColor"/><path fill="currentColor" d="M11 4.3h18v1.7H11zM11 7.15h19.5v1.7H11zM11 10h18v1.7H11z"/><path fill="currentColor" d="M14 3.4h1.8v9.2H14zM25.5 3.6h1.6v8.8h-1.6z"/><path fill="currentColor" d="M5 11.5h2.8v3.8H5z"/><path fill="#000" fill-opacity=".35" d="M3.5 5.5h6.5v1.2H3.5z"/></svg>',
+    // скорострельный дробовик с барабаном
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 6.5l5-1.4h5V4h17.5v2.6H12.5l-.6 1.4H8L6.4 11.5H2.6l1.8-3.9H1z"/><circle cx="15.5" cy="10.3" r="3.8" fill="currentColor"/><circle cx="15.5" cy="10.3" r="1.5" fill="#000" fill-opacity=".4"/><path fill="#000" fill-opacity=".35" d="M20 4.6h7v1h-7z"/></svg>',
+    // дробовик-тройка: три ствола
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M1 7.2l6-1.7h5v5.6H8.6L6.8 13.8H2.8l2-4.4H1z"/><path fill="currentColor" d="M12 3.8h18.5v1.9H12zM12 7.05h18.5v1.9H12zM12 10.3h18.5v1.9H12z"/><path fill="currentColor" d="M16 3.4h2.4v9.2H16z"/></svg>',
+    // узи
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M5 4h18v4.6H5zM23 5h6v2.4h-6zM5 4L2 6.2v2.4h3z"/><path fill="currentColor" d="M12.4 8.6h3.6v7h-3.6z"/><path fill="#000" fill-opacity=".4" d="M7 5.2h9v1.1H7zM13.4 12h1.6v3h-1.6z"/></svg>',
+    // граната
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><ellipse cx="16" cy="9.6" rx="5.3" ry="5.6" fill="currentColor"/><path fill="currentColor" d="M14 2.4h4v2.6h-4z"/><path fill="none" stroke="currentColor" stroke-width="1.2" d="M18 3.2c2.3-.6 3.9.6 3.9 2.5"/><path fill="none" stroke="#000" stroke-opacity=".4" stroke-width="1" d="M11.1 8h9.8M11 11.2h10M16 4.4v10.6"/></svg>',
+    // щит с окошком
+    '<svg viewBox="0 0 32 16" aria-hidden="true"><path fill="currentColor" d="M10 1.2h12v8.6c0 2.7-2.7 4.6-6 5.8-3.3-1.2-6-3.1-6-5.8z"/><rect x="12.4" y="3.6" width="7.2" height="2.4" rx=".7" fill="#000" fill-opacity=".45"/><path fill="none" stroke="#000" stroke-opacity=".3" stroke-width=".9" d="M16 6.8v7.4"/></svg>'
   ];
   const slotEls = [];
   (function buildWeaponBar() {
@@ -2282,17 +2371,21 @@
     const sig = me.cur + '|' + me.ammo.join(',') + '|' + me.alive;
     if (force || sig !== hudSig) {
       hudSig = sig;
+      // у щита на значке - патроны пистолета (атака со щитом - из него)
+      const cnt = i => (i === W.FISTS ? '∞' : WEAPONS[i].noAmmo ? (me.ammo[W.PISTOL] > 0 ? String(me.ammo[W.PISTOL]) : '—') : String(Math.max(0, me.ammo[i])));
+      let pos = 0;
       slotEls.forEach((el, i) => {
         const owned = i === W.FISTS || me.ammo[i] >= 0;
         el.hidden = !owned;
+        if (owned) { pos++; el.title = `${pos <= 10 ? (pos % 10) + '. ' : ''}${WEAPONS[i].name}`; }
         el.classList.toggle('active', i === me.cur);
-        el.classList.toggle('empty', i !== W.FISTS && me.ammo[i] === 0);
-        el.querySelector('.c').textContent = i === W.FISTS ? '∞' : String(Math.max(0, me.ammo[i]));
+        el.classList.toggle('empty', i !== W.FISTS && !WEAPONS[i].noAmmo && me.ammo[i] === 0);
+        el.querySelector('.c').textContent = cnt(i);
         el.setAttribute('aria-pressed', i === me.cur ? 'true' : 'false');
       });
       // на кнопке смены оружия - значок текущего оружия и патроны
       $('btnWeaponIcon').innerHTML = ICONS[me.cur] || ICONS[0];
-      $('btnWeaponText').textContent = me.cur === W.FISTS ? '∞' : String(Math.max(0, me.ammo[me.cur]));
+      $('btnWeaponText').textContent = cnt(me.cur);
       $('btnWeapon').setAttribute('aria-label', `Сменить оружие (сейчас: ${WEAPONS[me.cur].name})`);
     }
     // кнопки справа
@@ -2772,6 +2865,10 @@
   // Выстрел в браузере сразу (звук, вспышка) - по тем же правилам, что на сервере (room.updateFiring)
   function predictFire(now) {
     if (input.pressFire && now - input.pressAt > PRESS_MS) input.pressFire = false; // давнее нажатие не стреляет с опозданием
+    // миниган раскручивается, пока зажата атака (как на сервере)
+    const dtp = Math.min(100, now - (S.me.spinAt || now));
+    S.me.spinAt = now;
+    S.me.spinT = WEAPONS[S.me.cur].spin && S.me.alive && input.fire ? Math.min(1000, (S.me.spinT || 0) + dtp) : Math.max(0, (S.me.spinT || 0) - dtp * 2);
     if (!S.me.alive || !(input.fire || input.pressFire)) return;
     if (S.me.sprinting || now < S.me.rollUntil) { input.pressFire = false; return; }
     // в танке - снаряд из башни раз в 1.6 с; оружие в руках не тратится (как на сервере)
@@ -2786,8 +2883,11 @@
       if (!a11y('motion')) S.shake = Math.max(S.shake, 0.4);
       return;
     }
-    const w = WEAPONS[S.me.cur];
+    let w = WEAPONS[S.me.cur];
+    // со щитом стреляешь из пистолета, если он есть
+    if (w.shield) { if (!(S.me.ammo[W.PISTOL] > 0)) { input.pressFire = false; return; } w = WEAPONS[W.PISTOL]; }
     if (now < S.me.nextShot) return;
+    if (w.spin && S.me.spinT < w.spin * 1000) return;
     if ((w.melee && S.me.vehicle) || (w.id !== W.FISTS && !(S.me.ammo[w.id] > 0))) {
       input.pressFire = false;
       if (!w.melee && now > S.emptyAt) { Sound.empty(); S.emptyAt = now + 350; }
@@ -2798,6 +2898,7 @@
     if (w.id === W.FISTS) { S.me.punch = 1; Sound.punch(); return; }
     S.me.ammo[w.id]--;
     if (w.saw) { S.me.saw = 1; Sound.saw(); return; }
+    if (w.throw) { Sound.toss(); return; }
     const dx = Math.cos(S.me.a), dy = Math.sin(S.me.a);
     const off = S.me.vehicle ? 0.9 : 0.2 + GUN[w.id].len;
     if (w.flame) {
@@ -3013,6 +3114,7 @@
     }
     if (pol) want.push({ key: 'pol', name: 'siren', gain: 0.45, x: pol.rx, y: pol.ry });
     if (amb) want.push({ key: 'amb', name: 'ambulance', gain: 0.4, x: amb.rx, y: amb.ry });
+    if (S.me.alive && WEAPONS[S.me.cur].spin && S.me.spinT > 0) want.push({ key: 'mini', name: 'saw_idle', gain: 0.08 + (S.me.spinT / 1000) * 0.14, rate: 1.6 + (S.me.spinT / 1000) * 1.2 });
     // винт ближайшего вертолёта (сбитый - ниже тоном)
     let hel = null, hd = 50;
     for (const h of S.helis.values()) { const d = Math.hypot(h.rx - S.me.x, h.ry - S.me.y); if (d < hd) { hd = d; hel = h; } }
@@ -3083,6 +3185,14 @@
     drawDecals(now, inView);
     const tsec = now / 1000;
     for (const pk of S.pickups.values()) if (inView(pk.x - 2, pk.y - 2, 4, 4)) drawPickup(pk, tsec);
+    // гранаты на земле: тёмно-зелёные, перед взрывом мигают красным
+    for (const [id, g] of S.grenades) {
+      if (Date.now() - g.seen > 300) { S.grenades.delete(id); continue; }
+      g.rx += (g.tx - g.rx) * Math.min(1, dt * 14); g.ry += (g.ty - g.ry) * Math.min(1, dt * 14);
+      ctx.fillStyle = '#3d5a2a'; ctx.beginPath(); ctx.arc(g.rx, g.ry, 0.16, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 0.04; ctx.stroke();
+      if (g.blink && Math.floor(now / 110) % 2) { ctx.fillStyle = '#ff3030'; ctx.beginPath(); ctx.arc(g.rx, g.ry, 0.07, 0, Math.PI * 2); ctx.fill(); }
+    }
     // горящие заборы, ящики, скамейки, деревья
     for (const [k, until] of S.tileFires) {
       if (now > until) { S.tileFires.delete(k); continue; }
@@ -3163,7 +3273,13 @@
       }
       n.lx = n.rx; n.ly = n.ry;
       if (inView(n.rx - 1, n.ry - 1, 2, 2)) {
-        drawPed(n, now); n.drawnAt = now;
+        if (n.fl & 64) {
+          // спускается по лестнице с вертолёта: сначала крупнее (ближе к камере), к земле - обычного размера
+          if (!n.ropeT0) n.ropeT0 = now;
+          const k = 1 + 0.45 * Math.max(0, 1 - (now - n.ropeT0) / 900);
+          ctx.save(); ctx.translate(n.rx, n.ry); ctx.scale(k, k); ctx.translate(-n.rx, -n.ry); drawPed(n, now); ctx.restore();
+        } else drawPed(n, now);
+        n.drawnAt = now;
         // полоска здоровья у раненого жителя (полиция, прохожие) - как у игроков, без имени
         if ((n.fl & 1) && n.hp < 100) tags.push({ name: '', bot: true, x: n.rx, y: n.ry - 0.62, hp: n.hp, me: false });
       }
@@ -3189,8 +3305,8 @@
       ctx.setLineDash([]);
     }
     // в танке (мышью): круг взрыва снаряда там, куда целишься
-    if (S.me.alive && input.mode !== 'touch' && S.me.vehicle && S.car && S.car.kind === 4 && S.aimPt) {
-      const lw = WEAPONS[W.LAUNCHER], dd = Math.min(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y), lw.range + 2.6);
+    if (S.me.alive && input.mode !== 'touch' && S.aimPt && (curWeapon().blast) && !(S.me.vehicle && !(S.car && S.car.kind === 4) && curWeapon().throw)) {
+      const lw = curWeapon(), dd = Math.min(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y), lw.range + (S.car && S.car.kind === 4 ? 2.6 : 0));
       ctx.strokeStyle = 'rgba(255,120,60,0.7)';
       ctx.lineWidth = 0.07;
       ctx.beginPath(); ctx.arc(S.me.x + Math.cos(S.me.a) * dd, S.me.y + Math.sin(S.me.a) * dd, lw.blast.r, 0, Math.PI * 2); ctx.stroke();
@@ -3489,7 +3605,7 @@
       const a = S.me.a, c = Math.cos(a), s = Math.sin(a);
       const start = S.me.vehicle ? (S.car && S.car.kind === 4 ? 2.6 : 1.3) : 0.6;
       const toAim = S.aimPt ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : w.range || 10;
-      const reach = w.grenade ? toAim : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, Math.max(start + 0.6, Math.min(w.range || 10, toAim)));
+      const reach = w.grenade || w.throw ? Math.min(toAim, w.range) : w.melee ? 1.6 : laserLength(S.me.x, S.me.y, a, Math.max(start + 0.6, Math.min(w.range || 10, toAim)));
       const hw = w.pellets > 1 ? 0.25 + Math.tan(w.spread / 2) * reach : 0.28;
       ctx.save();
       ctx.translate(S.me.x, S.me.y);
@@ -3501,7 +3617,7 @@
       ctx.moveTo(start, -0.28); ctx.lineTo(Math.max(start, reach - 0.45), -hw); ctx.lineTo(reach, 0); ctx.lineTo(Math.max(start, reach - 0.45), hw); ctx.lineTo(start, 0.28);
       ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.restore();
-      if (w.grenade && S.aimPt) {
+      if ((w.grenade || w.throw) && S.aimPt) {
         ctx.strokeStyle = 'rgba(255,120,60,0.8)';
         ctx.lineWidth = 0.07;
         ctx.beginPath(); ctx.arc(S.aimPt[0], S.aimPt[1], w.blast.r, 0, Math.PI * 2); ctx.stroke();
