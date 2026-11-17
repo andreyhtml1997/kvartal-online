@@ -173,6 +173,13 @@ class Room {
     this.send(p, { t: 'tp', x: p.x, y: p.y, tp: p.tp, sp: 1, veh: 0 });
   }
 
+  // Стрелок (бот, житель) виден на экране у живого игрока? Из-за края экрана по игроку не стреляют -
+  // иначе пули «вылетают из пустоты». По ботам и жителям - без ограничения.
+  onScreenOf(t, x, y, margin = 1) {
+    if (!t || t.isBot || !t.view || t.isNpc) return true;
+    return Math.abs(x - t.x) < t.view[0] - margin && Math.abs(y - t.y) < t.view[1] - margin;
+  }
+
   teleport(p, x, y) {
     p.x = x; p.y = y; p.tp++; p.budget = 0; p.lastMoveTime = this.time;
     this.send(p, { t: 'tp', x: r2(x), y: r2(y), tp: p.tp, veh: p.vehicle || 0 });

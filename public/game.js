@@ -2060,9 +2060,10 @@
   function renderMiniBoard() {
     const rows = [...S.players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
     const maxRows = ch <= 460 ? 4 : 8;
-    let shown = rows.slice(0, maxRows);
-    const meRow = rows.find(p => p.id === S.myId);
-    if (meRow && !shown.includes(meRow)) shown = shown.slice(0, maxRows - 1).concat(meRow);
+    // живые игроки - всегда в таблице; оставшиеся строки - лучшие боты; порядок - по счёту
+    const humans = rows.filter(p => !p.bot);
+    const bots = rows.filter(p => p.bot).slice(0, Math.max(0, maxRows - humans.length));
+    const shown = rows.filter(p => !p.bot || bots.includes(p));
     const rest = rows.length - shown.length;
     const sig = shown.map(p => `${p.id}:${p.kills}:${p.name}:${p.color}`).join('|') + '|' + rest;
     if (sig === miniSig) return;
@@ -2790,6 +2791,7 @@
       const speed = id === S.me.vehicle && S.car ? S.car.v : v.v;
       const fl = id === S.me.vehicle && S.car ? (v.fl & ~1) | (S.car.thr < 0 && S.car.v > 0.5 ? 1 : 0) : v.fl;
       drawVehicle(v.rx, v.ry, v.ra, v.color, v.st, fl, speed, id === S.me.vehicle, v.kind, now);
+      v.drawnAt = now; // для проверки «каждого стрелка видно»
       if (v.driver && !(v.fl & 4)) {
         const d = S.players.get(v.driver);
         if (d) tags.push({ name: d.name, bot: d.bot, x: v.rx, y: v.ry - 2.4, hp: 100, me: v.driver === S.myId, talk: v.driver === S.myId ? Voice.talking() : !!(d.flags & 128) });
@@ -2823,6 +2825,7 @@
       const rolling = p.flags & 16;
       if (rolling && !p.wasRolling) p.rollT0 = now;
       p.wasRolling = rolling;
+      p.drawnAt = now;
       if (rolling) drawRoller(p.rx, p.ry, Math.atan2(p.mvy, p.mvx), p.color, (now - p.rollT0) / 1000, false);
       else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
       if (p.flags & 32) burnFx(p.rx, p.ry);
@@ -2839,7 +2842,7 @@
         n.walk += Math.hypot(dx, dy) * 4.8;
       }
       n.lx = n.rx; n.ly = n.ry;
-      if (inView(n.rx - 1, n.ry - 1, 2, 2)) drawPed(n, now);
+      if (inView(n.rx - 1, n.ry - 1, 2, 2)) { drawPed(n, now); n.drawnAt = now; }
     }
     for (const n of S.npcs) {
       const age = (now - n.t0) / 1000;

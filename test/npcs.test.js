@@ -60,7 +60,17 @@ assert.ok(car.state !== 'traffic' && drv, 'водитель отвечает н�
 // 4. две звезды - полиция с мигалками едет к игроку и стреляет на поражение
 N.crime(me, 80);
 assert.ok(me.stars >= 2, 'вторая звезда');
-let minD = 1e9, cops = 0, siren = false;
+let minD = 1e9, cops = 0, siren = false, offscreen = 0, atMe = 0;
+// никто не стреляет по игроку из-за края его экрана («из пустоты»)
+const spawnShot0 = room.spawnShot.bind(room);
+room.spawnShot = (x, y, a, w, owner, veh, aimD, npcId) => {
+  const toMe = Math.atan2(me.y - y, me.x - x);
+  if (owner !== me.id && Math.abs(Math.atan2(Math.sin(a - toMe), Math.cos(a - toMe))) < 0.3 && Math.hypot(me.x - x, me.y - y) < 40) {
+    atMe++;
+    if (Math.abs(x - me.x) > me.view[0] || Math.abs(y - me.y) > me.view[1]) offscreen++;
+  }
+  return spawnShot0(x, y, a, w, owner, veh, aimD, npcId);
+};
 run(30, i => {
   if (i % 15) return;
   for (const v of room.vehicles.list.values()) if (v.kind === 'police' && !v.dead) { minD = Math.min(minD, Math.hypot(v.x - me.x, v.y - me.y)); if (v.siren) siren = true; }
@@ -68,7 +78,9 @@ run(30, i => {
 });
 cops = [...N.list.values()].filter(n => n.kind === K.COP && n.alive && n.state === 'fight' && n.target === me.id).length;
 const pcars = [...room.vehicles.list.values()].filter(v => v.kind === 'police' && !v.dead).length;
-console.log(`полиция: машин ${pcars}, мигалки ${siren}, ближе всего ${minD.toFixed(1)} м, полицейских в бою ${cops}`);
+room.spawnShot = spawnShot0;
+console.log(`полиция: машин ${pcars}, мигалки ${siren}, ближе всего ${minD.toFixed(1)} м, полицейских в бою ${cops}; выстрелов в игрока ${atMe}, из-за края экрана ${offscreen}`);
+assert.strictEqual(offscreen, 0, 'по игроку не стреляют из-за края экрана');
 assert.ok(pcars >= 1 && siren, 'приехала полиция с мигалками');
 assert.ok(minD < 15, 'полиция добралась до игрока');
 

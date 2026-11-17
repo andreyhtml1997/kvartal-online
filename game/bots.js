@@ -178,7 +178,8 @@ class Bots {
       this.aimAt(p, ai, t, d);
       const w = WEAPONS[p.cur];
       const range = w.melee ? 1.25 : (w.range || 30) * 0.8;
-      p.fire = d <= range && this.canShoot(ai, room.time);
+      // по живому игроку - только когда бот виден у него на экране (не стреляет «из пустоты»)
+      p.fire = d <= range && room.onScreenOf(t, p.x, p.y) && this.canShoot(ai, room.time);
     } else {
       p.fire = false;
       if (ai.path && ai.pi < ai.path.length) {
@@ -371,7 +372,7 @@ class Bots {
     // стрельба из окна
     if (p.cur === W.FISTS) this.pickWeapon(p, bd);
     p.fire = false;
-    if (los && bd < 14 && !WEAPONS[p.cur].melee && p.ammo[p.cur] > 0) {
+    if (los && bd < 14 && !WEAPONS[p.cur].melee && p.ammo[p.cur] > 0 && room.onScreenOf(target, v.x, v.y)) {
       this.aimAt(p, ai, target, bd);
       p.fire = this.canShoot(ai, now);
     }

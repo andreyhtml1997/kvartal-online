@@ -323,7 +323,8 @@ class Npcs {
     const los = d < 32 && geom.losClear(this.map, n.x, n.y, tx, ty, true);
     const w = WEAPONS[n.w];
     const want = n.w === W.SHOTGUN ? 4.5 : 7;
-    if (!los || d > want + 3) this.follow(n, tx, ty, RUN * 0.85, dt, 2200);
+    const onScreen = room.onScreenOf(t, n.x, n.y);
+    if (!los || d > want + 3 || !onScreen) this.follow(n, tx, ty, RUN * 0.85, dt, 2200);
     else {
       n.strafeT -= dt;
       if (n.strafeT <= 0) { n.strafe = -n.strafe; n.strafeT = rnd(0.8, 2); }
@@ -333,7 +334,7 @@ class Npcs {
     if (los) {
       n.a = Math.atan2(ty - n.y, tx - n.x);
       if (n.kind !== K.COP) n.until = Math.max(n.until, now + 6);
-      if (now >= n.fireAt && now >= n.nextShot && d < w.range * 0.85 && this.canShoot(n, now)) this.shoot(n, tx, ty, d, 0);
+      if (onScreen && now >= n.fireAt && now >= n.nextShot && d < w.range * 0.85 && this.canShoot(n, now)) this.shoot(n, tx, ty, d, 0);
     }
   }
   // очереди: 0.5-1 с огня, пауза 0.9-1.6 с
@@ -634,14 +635,14 @@ class Npcs {
         if (Math.abs(v.v) >= 1) P.slowT = 0;
         // с 3 звёзд напарник стреляет из окна
         const mate = v.crew[1] ? this.list.get(v.crew[1]) : null;
-        if (mate && t.stars >= 3 && los && dT < 15 && now >= mate.nextShot && this.canShoot(mate, now)) this.shoot(mate, txp, typ, dT, v.id, v.x + Math.cos(v.a + 1.57) * 0.6, v.y + Math.sin(v.a + 1.57) * 0.6);
+        if (mate && t.stars >= 3 && los && dT < 15 && room.onScreenOf(t, v.x, v.y) && now >= mate.nextShot && this.canShoot(mate, now)) this.shoot(mate, txp, typ, dT, v.id, v.x + Math.cos(v.a + 1.57) * 0.6, v.y + Math.sin(v.a + 1.57) * 0.6);
       }
     }
     if (v.role === 'ram') { gx = txp; gy = typ; direct = los; }
     if (v.role === 'driveby') {
       gx = txp; gy = typ; direct = los && dT > 9;
       if (dT < 9) limit = 3;
-      if (los && dT < 16 && now >= drv.nextShot && this.canShoot(drv, now)) this.shoot(drv, txp, typ, dT, v.id, v.x + Math.cos(v.a - 1.57) * 0.6, v.y + Math.sin(v.a - 1.57) * 0.6);
+      if (los && dT < 16 && room.onScreenOf(t, v.x, v.y) && now >= drv.nextShot && this.canShoot(drv, now)) this.shoot(drv, txp, typ, dT, v.id, v.x + Math.cos(v.a - 1.57) * 0.6, v.y + Math.sin(v.a - 1.57) * 0.6);
     }
     if (v.role === 'amb') {
       gx = v.stop[0]; gy = v.stop[1];

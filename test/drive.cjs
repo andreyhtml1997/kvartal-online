@@ -171,6 +171,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(await ph.isVisible('#miniBoard'), 'справа вверху видна таблица счёта всех игроков');
     const rowsMini = await ph.$$eval('#miniBoard li', l => l.length);
     check(rowsMini >= 3, `в таблице счёта строк: ${rowsMini}`);
+    const miniNames = await ph.$$eval('#miniBoard li .nm', l => l.map(e => e.textContent));
+    check(miniNames.includes('Водитель') && miniNames.includes('Богдан'), `оба живых игрока всегда в таблице справа (${miniNames.join(', ')})`);
     // снова держим джойстик для следующих проверок
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 140, y: 290, id: 1 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 170, y: 290, id: 1 }] });
