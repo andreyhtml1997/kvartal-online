@@ -234,6 +234,8 @@ class Room {
     p.fire = !!m.f;
     if (m.f) p.fireLatch = true;
     p.sprint = !!m.s && !p.vehicle;
+    const d = Number(m.d);
+    p.aimD = Number.isFinite(d) && d > 0 ? Math.min(100, d) : 0; // до какой точки целится (граната взрывается там)
     if (Array.isArray(m.v)) {
       const vw = Number(m.v[0]), vh = Number(m.v[1]);
       if (Number.isFinite(vw) && Number.isFinite(vh)) p.view = [Math.max(8, Math.min(70, vw)), Math.max(8, Math.min(70, vh))];
@@ -318,9 +320,11 @@ class Room {
       const ang = n > 1
         ? p.a + (i / (n - 1) - 0.5) * w.spread + (Math.random() - 0.5) * 0.05
         : p.a + (Math.random() - 0.5) * 2 * w.spread;
+      // граната летит до прицела (не ближе 2.5 м), пули - на всю дальность
+      const reach = w.grenade && p.aimD > 1 ? Math.max(2.5, Math.min(w.range, p.aimD)) : w.range;
       const b = {
         id: this.nextBullet++, owner: p.id, veh: p.vehicle || 0, w: w.id, x: p.x + ox, y: p.y + oy,
-        dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: w.range, range: w.range, dead: false
+        dx: Math.cos(ang), dy: Math.sin(ang), speed: w.speed, left: reach, range: reach, dead: false
       };
       this.bullets.push(b);
       this.ev.b.push([b.id, w.id, r2(b.x), r2(b.y), r3(ang), p.id]);

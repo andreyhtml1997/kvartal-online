@@ -14,7 +14,7 @@ const { CAR, CAR_BLAST } = KV;
 const TRAFFIC_TARGET = 10;
 const TRAFFIC_SPEED = 9.5;
 const PARKED_RESPAWN = 120;   // с - через сколько на месте взорванной машины с парковки появится новая
-const MAX_VEHICLES = 44;
+const EXTRA_VEHICLES = 14;   // сколько машин сверх припаркованных и машин с водителями (брошенные и т.п.)
 const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -33,6 +33,8 @@ class Vehicles {
     this.nextTrafficAt = 0;
     this.respawnQueue = [];
     for (const sp of room.map.carSpawns) this.create(sp.x, sp.y, sp.a, sp.color, 'parked', sp);
+    // лимит считается сверх припаркованных: на картах с большими парковками машины с водителями всё равно ездят
+    this.maxVehicles = this.list.size + TRAFFIC_TARGET + EXTRA_VEHICLES;
     for (let i = 0; i < TRAFFIC_TARGET; i++) this.spawnTraffic(true);
   }
 
@@ -104,7 +106,7 @@ class Vehicles {
 
   spawnTraffic(initial) {
     const room = this.room;
-    if (this.list.size >= MAX_VEHICLES) return null;
+    if (this.list.size >= this.maxVehicles) return null;
     for (let tries = 0; tries < (initial ? 150 : 40); tries++) {
       const d = Math.floor(Math.random() * 4);
       const i = Math.floor(Math.random() * this.vr.length), j = Math.floor(Math.random() * this.hr.length);
@@ -229,6 +231,7 @@ class Vehicles {
 
   // ---------- физика машин без игрока за рулём ----------
   physics(v, thr, steer, dt, driverId) {
+    const bx = v.x, by = v.y, ba = v.a;
     const res = KV.stepVehicle(this.map, v, thr, steer, dt, null);
     const credit = driverId || v.lastDriver;
     for (const k of res.rammed) this.room.destroyTile(k, credit);
@@ -250,6 +253,10 @@ class Vehicles {
         if (sd < 0) { v.sx -= nx * sd; v.sy -= ny * sd; }
         if (into > 3) this.ram(v, o, into, -nx, -ny, credit);
       }
+    }
+    // если после толчков машина всё же осталась в стене - возвращаем её на место до шага
+    if (KV.carOverlapsSolid(this.map, v.x, v.y, v.a, 0.03, null) && !KV.carOverlapsSolid(this.map, bx, by, ba, 0.03, null)) {
+      v.x = bx; v.y = by; v.a = ba; v.v = 0; v.sx = 0; v.sy = 0;
     }
   }
 
@@ -290,6 +297,7 @@ class Vehicles {
     v.state = 'parked';
     v.ai = null;
     v.brake = false;
+    KV.resolveCar(this.map, v); // машина без водителя не должна стоять в препятствии
   }
 
   explodeVehicle(v) {
@@ -498,7 +506,7 @@ class Vehicles {
     if (traffic < TRAFFIC_TARGET && room.time >= this.nextTrafficAt) this.nextTrafficAt = room.time + (this.spawnTraffic(false) ? 6 : 2);
     if (this.respawnQueue.length && this.respawnQueue[0].at <= room.time) {
       const e = this.respawnQueue.shift();
-      let free = this.list.size < MAX_VEHICLES;
+      let free = this.list.size < this.maxVehicles;
       for (const o of this.list.values()) if (Math.hypot(o.x - e.sp.x, o.y - e.sp.y) < 4.5) free = false;
       if (free && this.seenByHumans(e.sp.x, e.sp.y, 14)) free = false;
       if (free && KV.carHitsHard(this.map, e.sp.x, e.sp.y, e.sp.a, 0.05)) free = false;

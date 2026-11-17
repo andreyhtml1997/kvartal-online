@@ -13,7 +13,8 @@
   const INTERP_MS = 110;
   const SEND_MS = 50;
   const TP_MAX = 50;          // предел пикселей на метр (память под кэш карты)
-  const STICK_R = 56;         // радиус экранного джойстика, css px
+  const STICK_R = 56;         // радиус левого джойстика (ходьба), css px
+  const AIM_R = 78;           // радиус большого правого стика-прицела, css px
   const RADAR_SPAN = 64;      // сколько метров видно на радаре по стороне
   const RB = 4;               // пикселей на клетку в подложке радара
 
@@ -88,6 +89,7 @@
     big.width = Math.round(bs * mdpr);
     big.height = Math.round(bs * mdpr);
     big.style.width = big.style.height = bs + 'px';
+    $('feed').style.top = (8 + rs + 8) + 'px';
     S.tp = 0;
     updateRotateHint();
   }
@@ -995,8 +997,11 @@
         const [ox, oy] = stickOrigin(t.clientX, t.clientY);
         input.move = { id: t.identifier, ox, oy, x: t.clientX, y: t.clientY };
       } else if (!left && !input.aim) {
-        // правая половина - атака: держишь - стреляет без остановки, короткое касание - один выстрел
-        input.aim = { id: t.identifier, ox: t.clientX, oy: t.clientY, x: t.clientX, y: t.clientY, t0: performance.now(), moved: false };
+        // правая сторона - атака: держишь - стреляет без остановки, короткое касание - один выстрел.
+        // В круге справа внизу - большой стик (перекрестие отводится от персонажа), в любом другом месте - пули летят под палец.
+        const [bx, by] = aimBase();
+        const inStick = Math.hypot(t.clientX - bx, t.clientY - by) <= AIM_R * 1.35;
+        input.aim = { id: t.identifier, mode: inStick ? 'stick' : 'point', x: t.clientX, y: t.clientY, t0: performance.now() };
         input.fireTap = true;
       }
     }
@@ -1005,10 +1010,7 @@
     e.preventDefault();
     for (const t of e.changedTouches) {
       if (input.move && t.identifier === input.move.id) { input.move.x = t.clientX; input.move.y = t.clientY; }
-      if (input.aim && t.identifier === input.aim.id) {
-        input.aim.x = t.clientX; input.aim.y = t.clientY;
-        if (Math.hypot(t.clientX - input.aim.ox, t.clientY - input.aim.oy) > 12) input.aim.moved = true;
-      }
+      if (input.aim && t.identifier === input.aim.id) { input.aim.x = t.clientX; input.aim.y = t.clientY; }
     }
   }, { passive: false });
   function touchEnd(e) {
@@ -1060,15 +1062,7 @@
     }
     return out;
   }
-  function aimAssist(a) {
-    const w = WEAPONS[S.me.cur];
-    let best = null, bestDiff = 0.22;
-    for (const t of targetsInRange(Math.min(w.melee ? 2 : w.range, 24))) {
-      const diff = Math.abs(angDiff(t.ang, a));
-      if (diff < bestDiff) { bestDiff = diff; best = t.ang; }
-    }
-    return best === null ? a : a + angDiff(best, a) * 0.6;
-  }
+  // ближайший видимый противник (когда палец на стике почти не отведён)
   function autoAim() {
     const w = WEAPONS[S.me.cur];
     let best = null;
@@ -1076,8 +1070,20 @@
       if (!losClient(S.me.x, S.me.y, t.p.rx, t.p.ry)) continue;
       if (!best || t.d < best.d) best = t;
     }
-    return best ? best.ang : null;
+    return best ? { x: best.p.rx, y: best.p.ry } : null;
   }
+  // прицел «прилипает» к противнику, если тот рядом с перекрестием
+  function snapTarget(tx, ty) {
+    let best = null, bd = 1.3;
+    for (const p of S.players.values()) {
+      if (p.id === S.myId || !(p.flags & 1) || p.hidden || (p.flags & 8)) continue;
+      const d = Math.hypot(p.rx - tx, p.ry - ty);
+      if (d < bd) { bd = d; best = { x: p.rx, y: p.ry }; }
+    }
+    return best;
+  }
+  // центр большого правого стика (css px): справа внизу, левее колонки кнопок
+  function aimBase() { return [Math.max(cw * 0.72, cw - 200), ch - Math.min(115, ch * 0.3)]; }
 
   function updateInput(dt) {
     let mx = 0, my = 0;
@@ -1099,16 +1105,39 @@
     if (len > 0) { mx /= len; my /= len; }
     input.mx = mx; input.my = my;
 
+    S.aimSnap = false;
     if (input.mode === 'mouse') {
-      const sx = (S.me.x * S.view.tp + S.view.ox) / dpr, sy = (S.me.y * S.view.tp + S.view.oy) / dpr;
-      S.me.a = Math.atan2(input.mouseY - sy, input.mouseX - sx);
+      const tx = (input.mouseX * dpr - S.view.ox) / S.view.tp, ty = (input.mouseY * dpr - S.view.oy) / S.view.tp;
+      S.aimPt = [tx, ty];
+      S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x);
       input.fire = input.mouseDown;
     } else if (input.aim) {
-      const dx = input.aim.x - input.aim.ox, dy = input.aim.y - input.aim.oy;
-      if (input.aim.moved && Math.hypot(dx, dy) > 10) S.me.a = aimAssist(Math.atan2(dy, dx));
-      else { const auto = autoAim(); if (auto !== null) S.me.a = auto; }
+      const w = WEAPONS[S.me.cur];
+      const maxAim = w.melee ? 2.5 : Math.min(w.range || 10, S.zoomR * 0.95);
+      let tx = null, ty = null;
+      if (input.aim.mode === 'stick') {
+        // большой стик: чем дальше отвёл палец, тем дальше перекрестие от персонажа
+        const [bx, by] = aimBase();
+        const dx = input.aim.x - bx, dy = input.aim.y - by, l = Math.hypot(dx, dy);
+        const n = Math.min(1, l / AIM_R);
+        if (n > 0.15) { tx = S.me.x + (dx / l) * n * maxAim; ty = S.me.y + (dy / l) * n * maxAim; }
+      } else {
+        // пули летят точно под палец
+        tx = (input.aim.x * dpr - S.view.ox) / S.view.tp;
+        ty = (input.aim.y * dpr - S.view.oy) / S.view.tp;
+      }
+      if (tx === null) {
+        const auto = autoAim();
+        if (auto) { tx = auto.x; ty = auto.y; S.aimSnap = true; }
+      } else {
+        const snap = snapTarget(tx, ty);
+        if (snap) { tx = snap.x; ty = snap.y; S.aimSnap = true; }
+      }
+      if (tx !== null) { S.aimPt = [tx, ty]; S.me.a = Math.atan2(ty - S.me.y, tx - S.me.x); }
+      else S.aimPt = null;
       input.fire = true;
     } else {
+      S.aimPt = null;
       input.fire = false;
       if (!S.me.vehicle && (mx || my)) S.me.a += angDiff(Math.atan2(my, mx), S.me.a) * Math.min(1, dt * 10);
       else if (S.me.vehicle && S.car) S.me.a += angDiff(S.car.a, S.me.a) * Math.min(1, dt * 6);
@@ -1487,8 +1516,7 @@
     const v = me.vehicle ? S.vehicles.get(me.vehicle) : null;
     $('carBar').hidden = !v;
     if (v) { $('carFill').style.width = clamp((v.hp / CAR.HP) * 100, 0, 100) + '%'; $('carText').textContent = v.fl & 2 ? 'Машина горит!' : 'Машина ' + Math.round((v.hp / CAR.HP) * 100) + '%'; }
-    const mp = S.players.get(S.myId);
-    if (mp) $('scoreText').textContent = `Убийств ${mp.kills} · Смертей ${mp.deaths}`;
+    renderMiniBoard();
     const sig = me.cur + '|' + me.ammo.join(',') + '|' + me.alive;
     if (force || sig !== hudSig) {
       hudSig = sig;
@@ -1519,6 +1547,23 @@
       hint.innerHTML = me.vehicle ? '<b>F</b> - выйти · <b>H</b> - гудок' : '<b>F</b> - сесть в машину';
     } else hint.hidden = true;
     if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? `Возрождение через ${me.respawnIn.toFixed(1)} с` : 'Возрождение...';
+  }
+
+  // мини-таблица справа вверху: все игроки и их убийства; на маленьком экране - лучшие и вы
+  let miniSig = '';
+  function renderMiniBoard() {
+    const rows = [...S.players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    const maxRows = ch <= 460 ? 4 : 8;
+    let shown = rows.slice(0, maxRows);
+    const meRow = rows.find(p => p.id === S.myId);
+    if (meRow && !shown.includes(meRow)) shown = shown.slice(0, maxRows - 1).concat(meRow);
+    const rest = rows.length - shown.length;
+    const sig = shown.map(p => `${p.id}:${p.kills}:${p.name}:${p.color}`).join('|') + '|' + rest;
+    if (sig === miniSig) return;
+    miniSig = sig;
+    $('miniBoard').innerHTML = shown.map(p =>
+      `<li class="${p.id === S.myId ? 'me' : ''}" title="${esc(p.name)}: убийств ${p.kills}, смертей ${p.deaths}"><span class="dot" style="background:${esc(p.color)}"></span><span class="nm">${esc(p.name)}</span><span class="k">${p.kills}</span></li>`).join('') +
+      (rest > 0 ? `<li class="more">и ещё ${rest}</li>` : '');
   }
 
   function renderBoard() {
@@ -1871,6 +1916,8 @@
     const fire = (input.fire || input.fireTap) && !S.me.sprinting;
     input.fireTap = false;
     const msg = { t: 'i', a: r3(S.me.a), f: fire ? 1 : 0, s: S.me.sprinting ? 1 : 0, v: [Math.round(S.view.hw), Math.round(S.view.hh)] };
+    // до какой точки целимся: граната взрывается там, где прицел
+    if (S.aimPt) msg.d = r2(Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y));
     if (S.me.vehicle && S.car) msg.c = [r2(S.car.x), r2(S.car.y), r3(S.car.a), r2(S.car.v), S.car.tp];
     else { msg.x = r2(S.me.x); msg.y = r2(S.me.y); msg.tp = S.me.tp; }
     S.ws.send(JSON.stringify(msg));
@@ -2086,28 +2133,26 @@
       drawPlayer(n.x, n.y, n.a, n.color, 0, 0, 0, false, n.walk, n.a, true);
       ctx.globalAlpha = 1;
     }
-    if (S.me.alive && !S.me.vehicle) {
+    // линия прицела: у снайперки всегда (красная), на телефоне - пока палец целится, до перекрестия
+    const touchAim = input.mode === 'touch' && input.aim && S.aimPt;
+    if (S.me.alive && (WEAPONS[S.me.cur].id === W.SNIPER || touchAim) && !(S.me.vehicle && WEAPONS[S.me.cur].melee)) {
       const w = WEAPONS[S.me.cur];
-      if (w.id === W.SNIPER || (input.mode === 'touch' && input.aim)) {
-        const len = laserLength(S.me.x, S.me.y, S.me.a, w.id === W.SNIPER ? 40 : Math.min(w.range || 2, 9));
-        ctx.strokeStyle = w.id === W.SNIPER ? 'rgba(255,40,40,0.55)' : 'rgba(255,255,255,0.28)';
-        ctx.lineWidth = 0.05;
-        ctx.setLineDash([0.3, 0.25]);
-        ctx.beginPath(); ctx.moveTo(S.me.x + Math.cos(S.me.a) * 0.6, S.me.y + Math.sin(S.me.a) * 0.6); ctx.lineTo(S.me.x + Math.cos(S.me.a) * len, S.me.y + Math.sin(S.me.a) * len); ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      const want = touchAim ? Math.hypot(S.aimPt[0] - S.me.x, S.aimPt[1] - S.me.y) : 40;
+      const start = S.me.vehicle ? 1.2 : 0.6;
+      const len = laserLength(S.me.x, S.me.y, S.me.a, Math.max(start, Math.min(want, w.range || want)));
+      ctx.strokeStyle = w.id === W.SNIPER ? 'rgba(255,40,40,0.6)' : 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 0.05;
+      ctx.setLineDash([0.3, 0.25]);
+      ctx.beginPath(); ctx.moveTo(S.me.x + Math.cos(S.me.a) * start, S.me.y + Math.sin(S.me.a) * start); ctx.lineTo(S.me.x + Math.cos(S.me.a) * len, S.me.y + Math.sin(S.me.a) * len); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (S.me.alive && !S.me.vehicle) {
       const mp = S.players.get(S.myId);
       ctx.strokeStyle = 'rgba(255,210,63,0.75)';
       ctx.lineWidth = 0.07;
       ctx.beginPath(); ctx.arc(S.me.x, S.me.y, 0.72, 0, Math.PI * 2); ctx.stroke();
       drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving);
       tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true });
-    } else if (S.me.alive && S.me.vehicle && WEAPONS[S.me.cur].id !== W.FISTS && (input.mode === 'touch' ? input.aim : true)) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-      ctx.lineWidth = 0.05;
-      ctx.setLineDash([0.3, 0.25]);
-      ctx.beginPath(); ctx.moveTo(S.me.x + Math.cos(S.me.a) * 1.2, S.me.y + Math.sin(S.me.a) * 1.2); ctx.lineTo(S.me.x + Math.cos(S.me.a) * 7, S.me.y + Math.sin(S.me.a) * 7); ctx.stroke();
-      ctx.setLineDash([]);
     }
     drawBullets(now);
     drawParticles(false);
@@ -2161,8 +2206,53 @@
     if (!S.me.alive) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
     if (input.mode === 'touch') {
       drawStick(input.move, cw * 0.16, ch * 0.72, 'rgba(255,255,255,');
-      drawStick(input.aim, cw * 0.72, ch * 0.72, 'rgba(255,120,100,');
+      drawAimStick();
+      if (input.aim && S.aimPt && S.me.alive) drawCrosshair(S.aimPt[0] * tp + ox, S.aimPt[1] * tp + oy, input.aim.mode === 'point' ? 30 : 18);
     }
+  }
+
+  // перекрестие прицела на экране; в режиме «под палец» крупнее, чтобы было видно вокруг пальца
+  function drawCrosshair(sx, sy, rCss) {
+    const r = rCss * dpr;
+    const col = S.aimSnap ? '#ff4d4d' : '#ffffff';
+    ctx.lineWidth = 4 * dpr;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sx - r * 1.45, sy); ctx.lineTo(sx - r * 0.55, sy);
+    ctx.moveTo(sx + r * 0.55, sy); ctx.lineTo(sx + r * 1.45, sy);
+    ctx.moveTo(sx, sy - r * 1.45); ctx.lineTo(sx, sy - r * 0.55);
+    ctx.moveTo(sx, sy + r * 0.55); ctx.lineTo(sx, sy + r * 1.45);
+    ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(sx, sy, 2.2 * dpr, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // большой правый стик справа внизу: виден всегда, ручка двигается, когда палец в нём
+  function drawAimStick() {
+    const [bx, by] = aimBase();
+    const R = AIM_R * dpr, cx = bx * dpr, cy = by * dpr;
+    const active = input.aim && input.aim.mode === 'stick';
+    ctx.fillStyle = active ? 'rgba(255,120,100,0.12)' : 'rgba(255,120,100,0.06)';
+    ctx.strokeStyle = active ? 'rgba(255,120,100,0.6)' : 'rgba(255,120,100,0.28)';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // засечки-подсказка «прицел»
+    ctx.beginPath();
+    ctx.moveTo(cx - R * 0.25, cy); ctx.lineTo(cx + R * 0.25, cy);
+    ctx.moveTo(cx, cy - R * 0.25); ctx.lineTo(cx, cy + R * 0.25);
+    ctx.stroke();
+    let kx = 0, ky = 0;
+    if (active) {
+      kx = (input.aim.x - bx) * dpr; ky = (input.aim.y - by) * dpr;
+      const l = Math.hypot(kx, ky);
+      if (l > R) { kx *= R / l; ky *= R / l; }
+    }
+    ctx.fillStyle = active ? 'rgba(255,120,100,0.6)' : 'rgba(255,120,100,0.22)';
+    ctx.beginPath(); ctx.arc(cx + kx, cy + ky, R * 0.4, 0, Math.PI * 2); ctx.fill();
   }
 
   function drawStick(st, defX, defY, col) {

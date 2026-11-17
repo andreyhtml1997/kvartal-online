@@ -354,9 +354,17 @@ function generateMap(seed, W = KV.MAP_W, H = KV.MAP_H) {
   }
 
   // ---------- улицы: дороги свободны для машин с водителями; деревья и бочки на тротуарах ----------
+  // углы у перекрёстков не загромождаем: там поворачивают машины с водителями
+  const nearCross = (x, y, r) => {
+    for (let i = x - r; i <= x + r; i++) {
+      if (i < 0 || i >= W || !vRoad[i]) continue;
+      for (let j = y - r; j <= y + r; j++) if (j >= 0 && j < H && hRoad[j]) return true;
+    }
+    return false;
+  };
   for (let y = 1; y < H - 1; y++) {
     for (let x = 1; x < W - 1; x++) {
-      if (ground[I(x, y)] !== G.WALK || !free(x, y)) continue;
+      if (ground[I(x, y)] !== G.WALK || !free(x, y) || nearCross(x, y, 3)) continue;
       const r = rng();
       if (r < 0.018 && !near(x, y, 3, B.TREE)) block[I(x, y)] = B.TREE;
       else if (r < 0.024 && !near(x, y, 2, B.BARREL)) block[I(x, y)] = B.BARREL;

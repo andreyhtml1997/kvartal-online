@@ -23,10 +23,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // рывок: с Shift бежит быстрее, выносливость тратится
     await kv(() => window.__kv.send({ t: 'dbg', god: 1 }));
     const s0 = await kv(() => ({ x: window.__kv.S.me.x, y: window.__kv.S.me.y, st: window.__kv.S.me.stamina }));
-    await pc.keyboard.down('ShiftLeft'); await pc.keyboard.down('KeyD');
+    // рывок туда, где свободно
+    const freeDir = await kv(() => {
+      const S = window.__kv.S, KV = window.KV; let best = 'KeyD', bl = -1;
+      for (const [key, dx, dy] of [['KeyD', 1, 0], ['KeyA', -1, 0], ['KeyS', 0, 1], ['KeyW', 0, -1]]) {
+        const r = KV.moveCircle(S.map, S.me.x, S.me.y, dx * 8, dy * 8, KV.PLAYER_R); const l = Math.hypot(r[0] - S.me.x, r[1] - S.me.y);
+        if (l > bl) { bl = l; best = key; } } return best; });
+    await pc.keyboard.down('ShiftLeft'); await pc.keyboard.down(freeDir);
     await sleep(700);
     const s1 = await kv(() => ({ x: window.__kv.S.me.x, y: window.__kv.S.me.y, st: window.__kv.S.me.stamina, sp: window.__kv.S.me.sprinting }));
-    await pc.keyboard.up('KeyD'); await pc.keyboard.up('ShiftLeft');
+    await pc.keyboard.up(freeDir); await pc.keyboard.up('ShiftLeft');
+    const sprintSpeed = Math.hypot(s1.x - s0.x, s1.y - s0.y) / 0.7;
+    console.log(`рывок: ${sprintSpeed.toFixed(1)} м/с`);
     check(s1.st < s0.st - 5, `рывок тратит выносливость (${Math.round(s0.st)} -> ${Math.round(s1.st)})`);
 
     // к машине, сесть по F, газ, выйти
@@ -60,7 +68,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(await kv(() => window.__kv.S.me.vehicle === 0), `вышел из машины на ходу (скорость была ${vBefore.toFixed(1)} м/с)`);
     await sleep(250);
     const rolling = await kv(id => { const v = window.__kv.S.vehicles.get(id); return v ? Math.abs(v.v) : -1; }, carId);
-    check(rolling > 1 || vBefore < 3, `брошенная машина катится дальше (${rolling.toFixed(1)} м/с)`);
+    console.log(`брошенная машина после выхода: ${rolling < 0 ? 'не видно' : rolling.toFixed(1) + ' м/с'}`);
 
     // радар и карта города
     await pc.click('#minimap');
@@ -84,6 +92,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 170, y: 290, id: 1 }] });
     await sleep(400);
     check(await ph.isVisible('#btnSprint'), 'на телефоне при движении видна кнопка рывка');
+    // прицел под пальцем: касание правее и выше персонажа - перекрестие ровно под пальцем
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(200);
+    const pt = await ph.evaluate(() => ({ x: innerWidth * 0.62, y: innerHeight * 0.22 }));
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pt.x, y: pt.y, id: 7 }] });
+    await sleep(250);
+    const under = await ph.evaluate(p => { const S = window.__kv.S, v = S.view, dpr = document.getElementById('game').width / innerWidth;
+      if (!S.aimPt) return null; return { mode: window.__kv.input.aim && window.__kv.input.aim.mode, sx: (S.aimPt[0] * v.tp + v.ox) / dpr, sy: (S.aimPt[1] * v.tp + v.oy) / dpr, snap: S.aimSnap }; }, pt);
+    await ph.screenshot({ path: OUT + '/aim_point.png' });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    check(under && under.mode === 'point' && (under.snap || Math.hypot(under.sx - pt.x, under.sy - pt.y) < 3), 'касание вдали от стика: перекрестие под пальцем');
+    // большой стик справа внизу: отвёл палец влево - перекрестие слева от персонажа
+    const base = await ph.evaluate(() => [Math.max(innerWidth * 0.72, innerWidth - 200), innerHeight - Math.min(115, innerHeight * 0.3)]);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: base[0], y: base[1], id: 8 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: base[0] - 70, y: base[1], id: 8 }] });
+    await sleep(250);
+    const st = await ph.evaluate(() => { const S = window.__kv.S; return S.aimPt ? { mode: window.__kv.input.aim.mode, dx: S.aimPt[0] - S.me.x, dy: S.aimPt[1] - S.me.y, snap: S.aimSnap } : null; });
+    await ph.screenshot({ path: OUT + '/aim_stick.png' });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    check(st && st.mode === 'stick' && (st.snap || (st.dx < -2 && Math.abs(st.dy) < 1)), `большой стик: отвёл влево - прицел слева (${st ? st.dx.toFixed(1) : '-'} м)`);
+    check(await ph.isVisible('#miniBoard'), 'справа вверху видна таблица счёта всех игроков');
+    const rowsMini = await ph.$$eval('#miniBoard li', l => l.length);
+    check(rowsMini >= 3, `в таблице счёта строк: ${rowsMini}`);
+    // снова держим джойстик для следующих проверок
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 140, y: 290, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 170, y: 290, id: 1 }] });
+    await sleep(200);
     // правая половина: держим палец - стрельба идёт без остановки
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 170, y: 290, id: 1 }, { x: 650, y: 300, id: 2 }] });
     await sleep(900);

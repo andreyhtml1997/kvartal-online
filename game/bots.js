@@ -120,17 +120,18 @@ class Bots {
     const w = WEAPONS[p.cur];
     const lead = w.speed ? (d / w.speed) * 0.3 : 0;
     const ax = t.x + ai.tvx * lead, ay = t.y + ai.tvy * lead;
-    ai.aimJ = (ai.aimJ + (Math.random() - 0.5) * 0.16) * 0.92;
-    const err = 0.06 + Math.min(0.14, d * 0.006);
+    // разброс вдвое больше прежнего: боты заметно мажут
+    ai.aimJ = (ai.aimJ + (Math.random() - 0.5) * 0.32) * 0.92;
+    const err = 0.12 + Math.min(0.28, d * 0.012);
     p.a = Math.atan2(ay - p.y, ax - p.x) + ai.aimJ + (Math.random() - 0.5) * err * 2;
   }
 
-  // Стреляет очередями: 0.6-1.4 с огня, потом пауза 0.7-1.5 с
+  // Стреляет очередями: 0.5-1.1 с огня, потом пауза 0.9-1.8 с
   canShoot(ai, now) {
     if (now < ai.fireAt) return false;
     if (now > ai.burstEnd + ai.burstPause) {
-      ai.burstEnd = now + 0.6 + Math.random() * 0.8;
-      ai.burstPause = 0.7 + Math.random() * 0.8;
+      ai.burstEnd = now + 0.5 + Math.random() * 0.6;
+      ai.burstPause = 0.9 + Math.random() * 0.9;
     }
     return now <= ai.burstEnd;
   }
@@ -213,7 +214,7 @@ class Bots {
     }
     if (best) {
       if (best !== ai.target) {
-        ai.fireAt = now + 0.55 + Math.random() * 0.5; // реакция
+        ai.fireAt = now + 0.7 + Math.random() * 0.6; // реакция
         ai.tvx = 0; ai.tvy = 0;
       } else {
         const el = Math.max(0.05, now - ai.tseen);

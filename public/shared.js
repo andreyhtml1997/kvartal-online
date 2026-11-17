@@ -245,6 +245,20 @@
     return out;
   }
 
+  // Пересекает ли машина хоть одно препятствие (кроме уже проломленных клеток из ignore)
+  function carOverlapsSolid(map, x, y, a, shrink, ignore) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const hl = CAR.HL - shrink, hw = CAR.HW - shrink;
+    for (let ty = Math.floor(y - 2.3); ty <= Math.floor(y + 2.3); ty++) {
+      for (let tx = Math.floor(x - 2.3); tx <= Math.floor(x + 2.3); tx++) {
+        if (!carSolidAt(map, tx, ty)) continue;
+        if (ignore && ignore.has(ty * map.w + tx)) continue;
+        if (obbTileMTV(x, y, c, s, hl, hw, tx, ty)) return true;
+      }
+    }
+    return false;
+  }
+
   /*
    * Один шаг физики машины. car: {x, y, a, v, sx, sy}; throttle и steer от -1 до 1.
    * ignore - Set клеток, которые уже проломлены (ещё не подтверждены сервером).
@@ -266,9 +280,15 @@
     const n = Math.max(1, Math.ceil(Math.hypot(mx, my) / 0.25));
     const res = { impact: 0, rammed: [] };
     const ign = ignore || new Set();
+    const px = car.x, py = car.y, pa = car.a - steer * CAR.STEER * sf * dt;
     for (let i = 0; i < n; i++) {
       car.x += mx / n; car.y += my / n;
       resolveCarTiles(map, car, res, ign);
+    }
+    // зажало между препятствиями и вытолкнуть не вышло - шаг отменяется, машина остаётся где была
+    if (carOverlapsSolid(map, car.x, car.y, car.a, 0.03, ign) && !carOverlapsSolid(map, px, py, pa, 0.03, ign)) {
+      car.x = px; car.y = py; car.a = pa;
+      car.v = 0; car.sx = 0; car.sy = 0;
     }
     return res;
   }
@@ -356,7 +376,7 @@
     MAP_W, MAP_H, PLAYER_R, PLAYER_SPEED, SPRINT_SPEED, STAMINA, VIEW_RADIUS, TICK_RATE, RESPAWN_DELAY, SPAWN_PROTECT, MAX_HP, MAX_ARMOR,
     G, B, BLOCKS, W, WEAPONS, WEAPON_WEIGHTS, PK, CAR, CAR_BLAST, RAMMABLE, RAM_SPEED,
     isSolid, collideCircle, moveCircle, circleFree, segmentClear,
-    obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, stepVehicle, resolveCar, steerToward,
+    obbTileMTV, obbObbMTV, pushOutOBB, distToOBB, carSolidAt, carHitsHard, carOverlapTiles, carOverlapsSolid, stepVehicle, resolveCar, steerToward,
     damageStage, rleEncode, rleDecode
   };
 });
