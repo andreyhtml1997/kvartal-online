@@ -30,8 +30,8 @@ const POLICE_CAP = 7, AMB_CAP = 2;
 // вертолёт: прочность (2 ракеты в упор, 3 рядом или ~25 попаданий из автомата), сколько всего; танков всего
 const HELI_HP = 340, HELI_CAP = 2, TANK_CAP = 3;
 const HELI_BLAST = { r: 4.5, dmg: 140, tile: 420 };
-// вертолёт медленнее, стреляет реже и неметче, чем был (решение владельца 17.11.2026; было 14 м/с, очередь 6 раз в 3.5-5 с, ±0.28)
-const HELI_SPEED = 8, HELI_BURST = 5, HELI_PAUSE = [7, 10], HELI_SPREAD = 0.42;
+// вертолёт медленнее (было 14 м/с) и не стреляет - только кружит с прожектором и высаживает спецназ (решения владельца 17.11.2026)
+const HELI_SPEED = 8;
 // спецназ спускается с вертолёта по верёвочной лестнице: сколько бойцов и как часто; где «земля под вертолётом» -
 // там, куда падает его тень (в браузере тень сдвинута на столько же)
 const HELI_DROP = 3, HELI_DROP_EVERY = 45, ROPE_DX = 1.4, ROPE_DY = 1.9;
@@ -950,17 +950,6 @@ class Npcs {
       const sp = Math.min(HELI_SPEED, d * 1.5) * dt;
       h.x = clamp(h.x + (dx / d) * sp, -30, m.w + 30); h.y = clamp(h.y + (dy / d) * sp, -30, m.h + 30);
       h.a += angDiff(Math.atan2(dy, dx), h.a) * Math.min(1, dt * 3);
-    }
-    // очередь из пулемёта: неметко; только когда вертолёт виден у цели на экране и цель не под крышей
-    if (h.state === 'fly' && t) {
-      if (h.burst <= 0 && now >= h.nextBurst && room.onScreenOf(t, h.x, h.y, 0) && !this.underRoof(t.x, t.y)) { h.burst = HELI_BURST; h.nextBurst = now + rnd(HELI_PAUSE[0], HELI_PAUSE[1]); }
-      if (h.burst > 0 && now >= h.shotT) {
-        h.burst--; h.shotT = now + 0.14; h.shotAt = now;
-        const dist = Math.hypot(t.x - h.x, t.y - h.y);
-        const a = Math.atan2(t.y - h.y, t.x - h.x) + rnd(-HELI_SPREAD, HELI_SPREAD); // сверху и на ходу - неметко
-        room.spawnShot(h.x, h.y, a, WEAPONS[W.RIFLE], NPC_ID - K.HELI, 0, dist, 0, 1);
-        if (h.burst === HELI_BURST - 1) this.noise(t.x, t.y, 12);
-      }
     }
   }
   // спуск по лестнице: вертолёт над точкой - раз в секунду внизу появляется боец и сразу идёт ловить

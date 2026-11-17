@@ -80,13 +80,13 @@ const s2 = shots.length;
 const roped = () => [...N.list.values()].filter(n => n.kind === K.SWAT && n.heli).length;
 run(40, () => {
   for (const h of N.helis.values()) heliMinD = Math.min(heliMinD, Math.hypot(h.x - me.x, h.y - me.y));
-  if (shots.slice(s2).filter(s => s.owner === NPC_ID - K.HELI).length >= 10 && roped() >= 3) return false;
+  if (heliMinD < 12 && roped() >= 3) return false;
 });
 const heliShots = shots.slice(s2).filter(s => s.owner === NPC_ID - K.HELI);
 console.log(`вертолёт: в воздухе ${N.helis.size}, ближе всего ${heliMinD.toFixed(1)} м; выстрелов ${heliShots.length} ` +
   `(сверху ${heliShots.filter(s => s.air === 1).length}, из-за края экрана ${heliShots.filter(s => s.off).length}), попаданий ${hitsOnMe.get(NPC_ID - K.HELI) || 0}`);
 assert.ok(N.helis.size >= 1 && heliMinD < 12, 'на 4 звёздах прилетает вертолёт и кружит над игроком');
-assert.ok(heliShots.length >= 5 && heliShots.every(s => s.air === 1 && !s.off), 'вертолёт бьёт очередями сверху и только с экрана');
+assert.ok(heliShots.length === 0, 'вертолёт не стреляет (решение владельца 17.11.2026)');
 console.log(`с вертолёта по лестнице спустилось бойцов: ${roped()}`);
 assert.ok(roped() >= 3, 'с вертолёта спускается спецназ');
 const mm = ws.keep.filter(x => x.t === 'mm').pop();
