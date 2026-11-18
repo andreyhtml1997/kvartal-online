@@ -306,6 +306,19 @@ class Room {
         if (msg.hp !== undefined) p.hp = Math.max(1, Math.min(KV.MAX_HP, Number(msg.hp) || 1));
         if (Array.isArray(msg.tpTo) && !p.vehicle) { const q = KV.collideCircle(this.map, Number(msg.tpTo[0]) || p.x, Number(msg.tpTo[1]) || p.y, KV.PLAYER_R); this.teleport(p, q[0], q[1]); }
         if (msg.wanted) this.npcs.crime(p, Number(msg.wanted) || 30);
+        if (msg.lineup && !p.vehicle) {
+          const N = this.npcs, kinds = [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6];
+          const gun = k => (k === 1 ? W.PISTOL : k === 5 || k === 6 ? W.RIFLE : 0);
+          const ry = this.map.roads.y[1] || this.map.roads.y[0], rx = this.map.roads.x;
+          const xa = rx[1][0] + rx[1][1], xb = rx[2] ? rx[2][0] : xa + 24, cx = (xa + xb) / 2, cy = ry[0] + ry[1] / 2;
+          for (const v of [...this.vehicles.list.values()]) if (v.state === 'traffic' && Math.hypot(v.x - cx, v.y - cy) < 40) this.vehicles.remove(v);
+          this.teleport(p, cx, cy - 2.7);
+          kinds.forEach((k, i) => {
+            const x = cx + (i - (kinds.length - 1) / 2) * 1.35;
+            N.create(k, x, cy - 1.0, { a: Math.PI / 2, state: 'jog', w: gun(k), look: i * 5 + 1 });
+            N.create(k, x, cy + 1.1, { a: 0, state: 'jog', alive: false, hp: 0, deadAt: this.time, look: i * 5 + 3 });
+          });
+        }
         if (msg.shroom) {
           const spot = [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2], [0, 0]].find(([dx, dy]) => KV.circleFree(this.map, p.x + dx, p.y + dy, KV.PLAYER_R));
           this.addPickup(PK.SHROOM, 0, p.x + spot[0], p.y + spot[1], 1);

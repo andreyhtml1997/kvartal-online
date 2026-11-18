@@ -1281,10 +1281,15 @@
       ctx.save();
       ctx.translate(n.rx, n.ry); ctx.scale(1.2, 1.2); ctx.rotate(n.ra + Math.PI / 2);
       ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0.06, 0.08, 0.3, 0.62, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#3a4256'; ctx.fillRect(-0.18, 0.15, 0.13, 0.5); ctx.fillRect(0.05, 0.15, 0.13, 0.5);
+      const lk = Math.abs((n.id * 7 + (n.look | 0)) | 0);
+      const pantsL = n.kind === 1 ? '#1b2a5c' : n.kind === 2 ? '#e8e8e8' : n.kind === 5 ? '#15171c' : n.kind === 6 ? '#3d4a1e' : PANTS[(lk >> 3) % PANTS.length];
+      ctx.fillStyle = pantsL; ctx.fillRect(-0.18, 0.15, 0.13, 0.5); ctx.fillRect(0.05, 0.15, 0.13, 0.5);
+      ctx.fillStyle = '#2a1f17'; ctx.beginPath(); ctx.ellipse(-0.115, 0.68, 0.08, 0.06, 0, 0, Math.PI * 2); ctx.ellipse(0.115, 0.68, 0.08, 0.06, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = tint(col, -0.14); ctx.fillRect(-0.36, -0.28, 0.13, 0.08); ctx.fillRect(0.24, -0.33, 0.13, 0.08);
       ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, -0.05, 0.24, 0.36, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#d9a77c'; ctx.beginPath(); ctx.arc(-0.34, -0.2, 0.09, 0, Math.PI * 2); ctx.arc(0.34, -0.25, 0.09, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#2b1d14'; ctx.beginPath(); ctx.arc(0, -0.52, 0.17, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = SKINS[lk % SKINS.length]; ctx.beginPath(); ctx.arc(-0.4, -0.2, 0.085, 0, Math.PI * 2); ctx.arc(0.4, -0.25, 0.085, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = n.kind === 1 ? '#16245a' : n.kind === 5 ? '#0c0d10' : n.kind === 6 ? '#3d4d1c' : HAIRS[(lk >> 1) % HAIRS.length];
+      ctx.beginPath(); ctx.arc(0, -0.52, 0.17, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       return;
     }
@@ -1293,15 +1298,7 @@
       // врач на коленях лечит: зелёные крестики над телом
       if (Math.random() < 0.08) spawn('spark', n.rx + Math.cos(n.ra) * 0.7, n.ry + Math.sin(n.ra) * 0.7, 1, '#7dff9a', 0.8, 0.6, 0.06, -Math.PI / 2, 0.6);
     }
-    drawPlayer(n.rx, n.ry, n.ra, col, n.w || 0, n.fl & 4, 0, false, n.walk, Math.atan2(n.mvy, n.mvx), moving);
-    ctx.save();
-    ctx.translate(n.rx, n.ry); ctx.scale(1.2, 1.2); ctx.rotate(n.ra);
-    if (n.kind === 1) { ctx.fillStyle = '#0d1b4f'; ctx.beginPath(); ctx.arc(0.02, 0, 0.21, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffd23f'; ctx.fillRect(0.12, -0.04, 0.07, 0.08); }
-    else if (n.kind === 2) { ctx.fillStyle = '#e53935'; ctx.fillRect(-0.2, -0.05, 0.16, 0.1); ctx.fillRect(-0.17, -0.12, 0.1, 0.24); }
-    else if (n.kind === 3) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(-0.16, -0.36, 0.06, 0.72); }
-    else if (n.kind === 5) { ctx.fillStyle = '#0c0d10'; ctx.beginPath(); ctx.arc(0.02, 0, 0.23, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = 'rgba(120,180,255,0.55)'; ctx.fillRect(0.1, -0.1, 0.07, 0.2); }
-    else if (n.kind === 6) { ctx.fillStyle = '#3d4d1c'; ctx.beginPath(); ctx.arc(0.02, 0, 0.24, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#26300f'; ctx.lineWidth = 0.04; ctx.stroke(); }
-    ctx.restore();
+    drawPlayer(n.rx, n.ry, n.ra, col, n.w || 0, n.fl & 4, 0, false, n.walk, Math.atan2(n.mvy, n.mvx), moving, n.id * 7 + (n.look | 0), n.kind);
     // нападает - красное кольцо, горит - огонь
     if (n.fl & 16) { ctx.strokeStyle = 'rgba(255,50,50,0.75)'; ctx.lineWidth = 0.06; ctx.beginPath(); ctx.arc(n.rx, n.ry, 0.7, 0, Math.PI * 2); ctx.stroke(); }
     if (n.fl & 32) burnFx(n.rx, n.ry);
@@ -1456,54 +1453,108 @@
   }
 
   // Человек сверху: ноги шагают по направлению движения, корпус и руки - по прицелу
-  function drawPlayer(x, y, a, color, w, flags, punch, outline, walk, moveAng, moving) {
+  // ======================================================================
+  // Люди (18.11.2026, решение владельца - «подробнее, живее»): у каждого своя внешность по look - кожа, причёска
+  // (короткая, длинная с хвостом, ёжик, кепка), брюки, у части прохожих рюкзак; руки - рукава от плеч к кистям;
+  // на одежде свет и тень; уши и нос - видно, куда смотрит. Форма по роду: полиция в фуражке со значком, врач в белом
+  // с крестом, футболист в форме, спецназ в шлеме с визором и разгрузке, армия в каске и камуфляже. Размер прежний.
+  // ======================================================================
+  const SKINS = ['#f1c9a5', '#e0ac85', '#c98e63', '#a8724a', '#7e5233', '#e8b896'];
+  const HAIRS = ['#2b1d14', '#3d2817', '#1b1b1b', '#5c3b1f', '#8a6239', '#c79f5b', '#71706e', '#9c3f1d'];
+  const PANTS = ['#2f3a52', '#3a4256', '#4b3f33', '#262626', '#56606d', '#5b4a2e', '#2e4636'];
+  const CAPS = ['#c0392b', '#1f2d4d', '#1b1b1b', '#f2f2f2', '#f1c40f', '#7a6a4f'];
+  const tintCache = new Map();
+  // цвет светлее (k > 0) или темнее (k < 0) - для объёма одежды; не #rrggbb (например, hsl у видений) - как есть.
+  // Не путать с shade(r, g, b, h, st) выше - та красит стены в кусках карты.
+  function tint(hex, k) {
+    const key = hex + '|' + k;
+    let r = tintCache.get(key);
+    if (r) return r;
+    let c = String(hex).replace('#', '');
+    if (c.length === 3) c = c.split('').map(ch => ch + ch).join('');
+    const n = /^[0-9a-f]{6}$/i.test(c) ? parseInt(c, 16) : NaN;
+    if (!Number.isFinite(n)) r = hex;
+    else {
+      const f = v => Math.round(k > 0 ? v + (255 - v) * k : v * (1 + k));
+      r = `rgb(${f((n >> 16) & 255)},${f((n >> 8) & 255)},${f(n & 255)})`;
+    }
+    if (tintCache.size > 400) tintCache.clear();
+    tintCache.set(key, r);
+    return r;
+  }
+  // look - внешность (у игрока - по номеру, у жителя - по номеру и look), kind - род жителя (0 - прохожий или игрок)
+  function drawPlayer(x, y, a, color, w, flags, punch, outline, walk, moveAng, moving, look, kind) {
+    look = Math.abs(look | 0); kind = kind | 0;
     const blink = (flags & 2) && Math.floor(performance.now() / 110) % 2;
+    const skin = SKINS[look % SKINS.length];
+    const pants = kind === 1 ? '#1b2a5c' : kind === 2 ? '#e8e8e8' : kind === 3 ? '#f2f2f2' : kind === 5 ? '#15171c' : kind === 6 ? '#3d4a1e' : PANTS[(look >> 3) % PANTS.length];
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(1.2, 1.2);
     if (blink) ctx.globalAlpha = 0.45;
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath(); ctx.ellipse(0.08, 0.1, 0.42, 0.42, 0, 0, Math.PI * 2); ctx.fill();
-    // ноги: шагают по направлению движения, на бегу видно, как переставляются ступни
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
+    ctx.beginPath(); ctx.ellipse(0.09, 0.11, 0.44, 0.42, 0, 0, Math.PI * 2); ctx.fill();
+    // ноги: штанины и обувь, шагают по направлению движения
     ctx.save();
     ctx.rotate(moving ? moveAng : a);
-    const sw = moving ? Math.sin(walk) * 0.36 : 0;
-    ctx.strokeStyle = '#3a4256';
-    ctx.lineWidth = 0.15;
+    const sw = moving ? Math.sin(walk) * 0.34 : 0;
     ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(0, -0.12); ctx.lineTo(sw, -0.14);
-    ctx.moveTo(0, 0.12); ctx.lineTo(-sw, 0.14);
-    ctx.stroke();
-    ctx.fillStyle = '#3b2a1e';
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = 0.03;
-    ctx.beginPath(); ctx.ellipse(sw + 0.07, -0.14, 0.14, 0.085, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(-sw + 0.07, 0.14, 0.14, 0.085, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = pants; ctx.lineWidth = 0.17;
+    ctx.beginPath(); ctx.moveTo(-0.02, -0.12); ctx.lineTo(sw * 0.85, -0.14); ctx.moveTo(-0.02, 0.12); ctx.lineTo(-sw * 0.85, 0.14); ctx.stroke();
+    ctx.fillStyle = kind === 3 ? '#111111' : '#33261c'; ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 0.025;
+    ctx.beginPath(); ctx.ellipse(sw + 0.08, -0.14, 0.15, 0.085, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(-sw + 0.08, 0.14, 0.15, 0.085, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.restore();
-    // корпус, руки, оружие
+    // корпус - туда, куда смотрит
     ctx.rotate(a);
-    const skin = '#d9a77c';
+    let hR, hL;
     if (w === W.FISTS) {
       const ext = punch > 0 ? Math.sin(punch * Math.PI) * 0.3 : 0;
       const arm = moving ? Math.sin(walk) * 0.08 : 0;
-      ctx.fillStyle = skin;
-      ctx.beginPath(); ctx.arc(0.3 + ext - arm, 0.2, 0.11, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(0.28 + arm, -0.2, 0.11, 0, Math.PI * 2); ctx.fill();
-    } else {
-      // пила в работе дрожит
-      ctx.save(); ctx.translate(0.16 + (w === W.SAW && punch > 0 ? (Math.random() - 0.5) * 0.06 : 0), 0.06); drawGunShape(ctx, w); ctx.restore();
-      ctx.fillStyle = skin;
-      ctx.beginPath(); ctx.arc(0.22, 0.16, 0.1, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(0.42, 0.04, 0.09, 0, Math.PI * 2); ctx.fill();
-    }
+      hR = [0.3 + ext - arm, 0.2]; hL = [0.28 + arm, -0.2];
+    } else { hR = [0.22, 0.16]; hL = [0.42, 0.04]; }
+    // рукава от плеч к кистям
+    ctx.lineCap = 'round'; ctx.strokeStyle = tint(color, -0.14); ctx.lineWidth = 0.13;
+    ctx.beginPath(); ctx.moveTo(0.02, 0.3); ctx.lineTo(hR[0] - 0.05, hR[1]); ctx.moveTo(0.02, -0.3); ctx.lineTo(hL[0] - 0.05, hL[1]); ctx.stroke();
+    // пила в работе дрожит
+    if (w !== W.FISTS) { ctx.save(); ctx.translate(0.16 + (w === W.SAW && punch > 0 ? (Math.random() - 0.5) * 0.06 : 0), 0.06); drawGunShape(ctx, w); ctx.restore(); }
+    ctx.fillStyle = kind === 5 || kind === 6 ? '#2a2a24' : skin; // спецназ и армия - в перчатках
+    ctx.beginPath(); ctx.arc(hR[0], hR[1], 0.095, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(hL[0], hL[1], 0.09, 0, Math.PI * 2); ctx.fill();
+    // рюкзак у части прохожих
+    if (!kind && look % 5 === 2) { ctx.fillStyle = tint(PANTS[look % PANTS.length], 0.12); roundRect(ctx, -0.37, -0.2, 0.2, 0.4, 0.07); ctx.fill(); }
+    // туловище: свет спереди сверху, тень сзади
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.ellipse(0, 0, 0.22, 0.4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.lineWidth = outline ? 0.09 : 0.05;
-    ctx.strokeStyle = outline ? '#ffffff' : 'rgba(0,0,0,0.55)';
-    ctx.stroke();
-    ctx.fillStyle = '#2b1d14';
-    ctx.beginPath(); ctx.arc(0.02, 0, 0.19, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, 0.23, 0.41, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    ctx.beginPath(); ctx.ellipse(0.05, -0.08, 0.13, 0.28, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    ctx.beginPath(); ctx.ellipse(-0.1, 0.06, 0.1, 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    // форма: разгрузка спецназа, камуфляж, крест врача, полоса футболиста, значок полицейского
+    if (kind === 5) {
+      ctx.fillStyle = '#0d0e11'; roundRect(ctx, -0.17, -0.3, 0.32, 0.6, 0.08); ctx.fill();
+      ctx.fillStyle = '#2b2e35'; for (const yy of [-0.2, 0, 0.2]) ctx.fillRect(0.06, yy - 0.06, 0.09, 0.12);
+    } else if (kind === 6) {
+      ctx.fillStyle = 'rgba(40,52,20,0.7)';
+      for (const [cx2, cy2, rr] of [[-0.08, -0.22, 0.08], [0.06, 0.12, 0.07], [-0.05, 0.27, 0.06], [0.1, -0.1, 0.05]]) { ctx.beginPath(); ctx.arc(cx2, cy2, rr, 0, Math.PI * 2); ctx.fill(); }
+    } else if (kind === 2) {
+      // красные кресты на обоих плечах
+      ctx.fillStyle = '#e53935';
+      for (const sy of [-0.29, 0.29]) { ctx.fillRect(-0.06, sy - 0.022, 0.12, 0.044); ctx.fillRect(-0.022, sy - 0.06, 0.044, 0.12); }
+    } else if (kind === 3) {
+      // белые полосы по плечам и воротник
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.045;
+      ctx.beginPath(); ctx.moveTo(-0.07, -0.35); ctx.lineTo(0.07, -0.35); ctx.moveTo(-0.07, 0.35); ctx.lineTo(0.07, 0.35); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0.03, 0, 0.215, 0, Math.PI * 2); ctx.stroke();
+    } else if (kind === 1) {
+      // погоны и значок на груди слева
+      ctx.fillStyle = '#16245a'; ctx.fillRect(-0.07, 0.31, 0.12, 0.06); ctx.fillRect(-0.07, -0.37, 0.12, 0.06);
+      ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(0.1, -0.25, 0.045, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.lineWidth = outline ? 0.09 : 0.045;
+    ctx.strokeStyle = outline ? '#ffffff' : 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.ellipse(0, 0, 0.23, 0.41, 0, 0, Math.PI * 2); ctx.stroke();
+    drawHead(look, kind, skin, color);
     if (w === W.SHIELD) {
       // щит перед собой, с окошком
       ctx.fillStyle = '#1f2b4d'; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.04;
@@ -1511,6 +1562,56 @@
       ctx.fillStyle = 'rgba(150,200,255,0.6)'; ctx.fillRect(0.5, -0.13, 0.05, 0.26);
     }
     ctx.restore();
+  }
+  // голова сверху: фуражка, шлем, каска - или уши, лицо спереди, нос и волосы (кепка, короткие, длинные, ёжик)
+  function drawHead(look, kind, skin, body) {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.arc(0, 0, 0.215, 0, Math.PI * 2); ctx.fill();
+    if (kind === 1) {
+      ctx.fillStyle = '#16245a'; ctx.beginPath(); ctx.arc(0.02, 0, 0.21, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0b1230'; ctx.beginPath(); ctx.ellipse(0.17, 0, 0.08, 0.17, 0, -Math.PI / 2, Math.PI / 2); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(0.11, -0.035, 0.055, 0.07);
+      return;
+    }
+    if (kind === 5) {
+      ctx.fillStyle = '#0c0d10'; ctx.beginPath(); ctx.arc(0.02, 0, 0.23, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(120,180,255,0.55)'; ctx.fillRect(0.12, -0.12, 0.08, 0.24);
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.arc(-0.03, -0.07, 0.08, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
+    if (kind === 6) {
+      ctx.fillStyle = '#3d4d1c'; ctx.beginPath(); ctx.arc(0.02, 0, 0.245, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#26300f'; ctx.lineWidth = 0.04; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.arc(-0.03, -0.08, 0.08, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.ellipse(0.03, -0.19, 0.045, 0.035, 0, 0, Math.PI * 2); ctx.ellipse(0.03, 0.19, 0.045, 0.035, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0.035, 0, 0.18, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0.205, 0, 0.035, 0, Math.PI * 2); ctx.fill();
+    const hair = HAIRS[(look >> 1) % HAIRS.length], style = kind === 2 ? 0 : (look >> 2) % 4;
+    if (style === 3) {
+      let ci = (look >> 3) % CAPS.length;
+      if (CAPS[ci] === body) ci = (ci + 1) % CAPS.length; // кепка не в цвет футболки
+      const cap = CAPS[ci];
+      ctx.fillStyle = cap; ctx.beginPath(); ctx.arc(0, 0, 0.19, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = tint(cap, -0.28); ctx.beginPath(); ctx.ellipse(0.16, 0, 0.09, 0.15, 0, -Math.PI / 2, Math.PI / 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.arc(-0.04, -0.07, 0.07, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
+    ctx.fillStyle = hair;
+    if (style === 1) {
+      ctx.beginPath(); ctx.arc(-0.015, 0, 0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-0.22, 0, 0.1, 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (style === 2) {
+      const ga = ctx.globalAlpha;
+      ctx.globalAlpha = ga * 0.75; ctx.beginPath(); ctx.arc(-0.01, 0, 0.17, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = ga;
+    } else {
+      ctx.beginPath(); ctx.arc(-0.015, 0, 0.185, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = tint(hair, 0.25); ctx.lineWidth = 0.025;
+      ctx.beginPath(); ctx.moveTo(0.1, -0.06); ctx.lineTo(-0.15, -0.04); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.beginPath(); ctx.arc(-0.03, -0.07, 0.07, 0, Math.PI * 2); ctx.fill();
   }
 
   function laserLength(x, y, a, max) {
@@ -3692,7 +3793,7 @@
       p.wasRolling = rolling;
       p.drawnAt = now;
       if (rolling) drawRoller(p.rx, p.ry, Math.atan2(p.mvy, p.mvx), p.color, (now - p.rollT0) / 1000, false);
-      else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving);
+      else drawPlayer(p.rx, p.ry, p.ra, p.color, p.w, p.flags, p.w === W.SAW ? p.saw : p.punch, a11y('contrast'), p.walk, Math.atan2(p.mvy, p.mvx), moving, p.id * 13 + 5, 0);
       if (p.flags & 32) burnFx(p.rx, p.ry);
       if (p.flags & 64) tripHalo(p.rx, p.ry, now);
       tags.push({ name: p.name, bot: p.bot, x: p.rx, y: p.ry - 0.62, hp: p.hp, me: false, talk: !!(p.flags & 128), col: S.gang && !p.bot ? ALLY_COL : undefined });
@@ -3752,7 +3853,7 @@
       ctx.lineWidth = 0.07;
       ctx.beginPath(); ctx.arc(S.me.x, S.me.y, 0.72, 0, Math.PI * 2); ctx.stroke();
       if (now < S.me.rollUntil) drawRoller(S.me.x, S.me.y, S.me.rollAng, mp ? mp.color : '#fff', 1 - (S.me.rollUntil - now) / (KV.ROLL.TIME * 1000), true);
-      else drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.cur === W.SAW ? S.me.saw : S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving);
+      else drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.cur === W.SAW ? S.me.saw : S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving, S.myId * 13 + 5, 0);
       if (mp && (mp.flags & 32)) burnFx(S.me.x, S.me.y);
       tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true, talk: Voice.talking() });
     }
