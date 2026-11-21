@@ -142,7 +142,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(1200);
     const noBots = await kv(() => [...window.__kv.S.players.values()].filter(p => p.bot).length);
     check(noBots === 0, `переключатель «Боты: выключены» убирает ботов (осталось ${noBots})`);
-    check((await pc.textContent('#btnBots')).includes('выключены'), 'кнопка показывает, что боты выключены');
+    check(/выключены|off/.test(await pc.textContent('#btnBots')), 'кнопка показывает, что боты выключены');
     await pc.click('#btnBots');
     await sleep(1200);
     const backBots = await kv(() => [...window.__kv.S.players.values()].filter(p => p.bot).length);

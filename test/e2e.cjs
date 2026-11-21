@@ -37,7 +37,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const names = await pc.evaluate(() => [...window.__kv.S.players.values()].map(p => p.name));
     log('игроки у компьютера:', names.join(', '));
     check(names.includes('Богдан'), 'компьютер видит телефон в списке игроков');
-    check(names.filter(n => n.includes('(бот)')).length === 0, 'ботов по умолчанию нет - в комнате только люди');
+    check(names.filter(n => /\((бот|bot)\)/.test(n)).length === 0, 'ботов по умолчанию нет - в комнате только люди');
 
     // ---- ходьба с клавиатуры, сервер принимает позицию ----
     const before = await pc.evaluate(() => ({ x: window.__kv.S.me.x, y: window.__kv.S.me.y, tp: window.__kv.S.me.tp }));
@@ -118,7 +118,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check(await pc.isVisible('#menu'), 'кнопка «Выход» возвращает в меню');
     await sleep(1500);
     const left = await ph.evaluate(() => [...window.__kv.S.players.values()].map(p => p.name));
-    check(!left.includes('Андрей') && left.filter(n => n.includes('(бот)')).length === 0, 'после выхода игрока в комнате только телефон, ботов нет');
+    check(!left.includes('Андрей') && left.filter(n => /\((бот|bot)\)/.test(n)).length === 0, 'после выхода игрока в комнате только телефон, ботов нет');
   } catch (e) {
     ok = false;
     console.log('FAIL исключение:', e.message);

@@ -9,6 +9,21 @@
   const isTouch = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window;
   if (isTouch) root.classList.add('touch');
 
+  // Язык (21.11.2026): по умолчанию английский, русский - кнопкой RU в меню или ссылкой ?lang=ru (выбор запоминается).
+  // Выбирает скрипт в <head> index.html - атрибут data-lang у <html>; русские тексты разметки лежат в data-ru* рядом с английскими.
+  const RU = root.getAttribute('data-lang') === 'ru';
+  const T = (ru, en) => (RU ? ru : en);
+  if (!RU) for (const w of WEAPONS) if (w.en) w.name = w.en;
+  if (RU) {
+    for (const el of document.querySelectorAll('[data-ru]')) el.textContent = el.getAttribute('data-ru');
+    for (const el of document.querySelectorAll('[data-ru-html]')) el.innerHTML = el.getAttribute('data-ru-html');
+    for (const a of ['aria-label', 'placeholder', 'title']) {
+      for (const el of document.querySelectorAll('[data-ru-' + a + ']')) el.setAttribute(a, el.getAttribute('data-ru-' + a));
+    }
+    document.title = 'Квартал - перестрелка в городе';
+  }
+  root.classList.remove('i18n-wait');
+
   const CHUNK = 16;
   const INTERP_MS = 110;
   const SEND_MS = 50;
@@ -50,7 +65,7 @@
   };
 
   function makePlayer(id) {
-    return { id, name: 'Игрок', color: '#cccccc', bot: false, kills: 0, deaths: 0, snaps: [], flags: 0, w: 0, hp: 100,
+    return { id, name: T('Игрок', 'Player'), color: '#cccccc', bot: false, kills: 0, deaths: 0, snaps: [], flags: 0, w: 0, hp: 100,
       rx: 0, ry: 0, ra: 0, seen: 0, punch: 0, hidden: true, walk: 0, lx: null, ly: null, mvx: 0, mvy: 0, stepAcc: 0 };
   }
   function upsertPlayer(info) {
@@ -62,13 +77,16 @@
     return isNew;
   }
   // жители (стрелок с отрицательным номером: -100 - вид)
-  const NPC_NAMES = ['Прохожий', 'Полиция', 'Врач', 'Футболист', 'Тренер', 'Спецназ', 'Армия', 'Вертолёт'];
-  const NPC_KILL = ['Вас убил прохожий', 'Вас убила полиция', 'Вас убил врач', 'Вас убил футболист', 'Вас убил тренер',
-    'Вас убил спецназ', 'Вас убила армия', 'Вас расстрелял вертолёт'];
+  const NPC_NAMES = RU ? ['Прохожий', 'Полиция', 'Врач', 'Футболист', 'Тренер', 'Спецназ', 'Армия', 'Вертолёт']
+    : ['Pedestrian', 'Police', 'Medic', 'Footballer', 'Coach', 'SWAT', 'Army', 'Helicopter'];
+  const NPC_KILL = RU ? ['Вас убил прохожий', 'Вас убила полиция', 'Вас убил врач', 'Вас убил футболист', 'Вас убил тренер',
+    'Вас убил спецназ', 'Вас убила армия', 'Вас расстрелял вертолёт']
+    : ['Killed by a pedestrian', 'Killed by the police', 'Killed by a medic', 'Killed by a footballer', 'Killed by a coach',
+      'Killed by SWAT', 'Killed by the army', 'Gunned down by the helicopter'];
   const LAW_KIND = k => k === 1 || k === 5 || k === 6; // полиция, спецназ, армия
   // чем стреляем сейчас: в танке - пушка (как гранатомёт), иначе оружие в руках
   const curWeapon = () => (S.me.vehicle && S.car && S.car.kind === 4 ? WEAPONS[W.LAUNCHER] : WEAPONS[S.me.cur]);
-  const nameOf = id => (id <= -100 ? NPC_NAMES[-100 - id] || 'Житель' : (S.players.get(id) || {}).name || '???');
+  const nameOf = id => (id <= -100 ? NPC_NAMES[-100 - id] || T('Житель', 'Civilian') : (S.players.get(id) || {}).name || '???');
 
   // ======================================================================
   // Холст
@@ -1061,20 +1079,21 @@
   const ALLY_COL = '#7dff9a';
 
   // вид: обычно - дальше - ближе (V или кнопка «Вид» в шестерёнке), запоминается; переход плавный
-  const CAM_ZOOM = [{ k: 1, name: 'обычно' }, { k: 1.3, name: 'дальше' }, { k: 0.8, name: 'ближе' }];
+  const CAM_ZOOM = [{ k: 1, name: T('обычно', 'normal') }, { k: 1.3, name: T('дальше', 'far') }, { k: 0.8, name: T('ближе', 'close') }];
   let camZoomI = 0;
   try { camZoomI = Math.max(0, Math.min(CAM_ZOOM.length - 1, Number(localStorage.getItem('kv_zoom')) | 0)); } catch (_) {}
-  function syncZoomBtn() { const b = $('btnZoom'); if (b) b.textContent = 'Вид: ' + CAM_ZOOM[camZoomI].name + (isTouch ? '' : ' (V)'); }
+  function syncZoomBtn() { const b = $('btnZoom'); if (b) b.textContent = T('Вид: ', 'View: ') + CAM_ZOOM[camZoomI].name + (isTouch ? '' : ' (V)'); }
   function cycleZoom() {
     camZoomI = (camZoomI + 1) % CAM_ZOOM.length;
     try { localStorage.setItem('kv_zoom', String(camZoomI)); } catch (_) {}
     syncZoomBtn();
-    toast('Вид: ' + CAM_ZOOM[camZoomI].name, 1200);
+    toast(T('Вид: ', 'View: ') + CAM_ZOOM[camZoomI].name, 1200);
   }
 
   // Круги-чекпоинты: цвет, подпись с ценой, значок (крест, пистолет, гаечный ключ)
   const SHOP_COL = { med: '255,90,90', gun: '255,210,63', fix: '90,170,255' };
-  const SHOP_LABEL = { med: `Больница: +10 за $${KV.SHOP_PRICE.med}`, gun: 'Оружейный', fix: `Мастерская $${KV.SHOP_PRICE.fix}` };
+  const SHOP_LABEL = RU ? { med: `Больница: +10 за $${KV.SHOP_PRICE.med}`, gun: 'Оружейный', fix: `Мастерская $${KV.SHOP_PRICE.fix}` }
+    : { med: `Hospital: +10 for $${KV.SHOP_PRICE.med}`, gun: 'Gun shop', fix: `Garage $${KV.SHOP_PRICE.fix}` };
   function drawShopIcon(g, k, x, y, s) {
     g.save(); g.translate(x, y);
     if (k === 'med') {
@@ -1685,13 +1704,21 @@
   // за 8 с или оборвалась - радио само переходит на следующую; не ответила ни одна - выключается до следующей просьбы.
   // Выбор запоминается. Звук игры выключен - радио молчит и поток не качается.
   // ======================================================================
-  const RADIO = [
+  // по-английски свои станции (21.11.2026): потоки вне России, проверены отсюда с браузерным User-Agent
+  const RADIO = RU ? [
     { name: '90-е Россия', url: 'https://stream03.pcradio.app/nineties_rus_pcradio-hi' },
     { name: 'Диско 90-х', url: 'https://stream.laut.fm/radio90s' },
     { name: 'Русский хит', url: 'https://securestreams6.autopo.st:2130/onlyrussian' },
     { name: 'Хиты 2000-х', url: 'https://radio3.dixi.md/listen/hit_fm_2000s_hits/hitfm2000hit128.aac' },
     { name: 'Ретро FM Рига', url: 'https://live.retrofm.lv/retrofmlatvia' },
     { name: 'Ретро FM Молдова', url: 'https://efir.retrofm.md:8000/retro' }
+  ] : [
+    { name: '80s Hits', url: 'https://listen.181fm.com/181-awesome80s_128k.mp3' },
+    { name: '90s Hits', url: 'https://stream.laut.fm/radio90s' },
+    { name: '2000s Hits', url: 'https://stream.laut.fm/2000er' },
+    { name: 'Eurodance', url: 'https://stream.laut.fm/eurodance' },
+    { name: 'Synthwave', url: 'https://stream.nightride.fm/nightride.mp3' },
+    { name: 'Rock Mix', url: 'https://stream.radioparadise.com/rock-128' }
   ];
   const Radio = (() => {
     // пустой звук: на iPhone первое воспроизведение разрешено только в нажатии - «будим» плеер при посадке
@@ -1712,7 +1739,7 @@
       if (tag) {
         tag.hidden = !active;
         tag.classList.toggle('tuning', state === 'tuning');
-        tag.textContent = idx < 0 ? (isTouch ? '♪ радио выключено' : '♪ радио выключено · Q/E') : '♪ ' + RADIO[idx].name + (state === 'tuning' ? '...' : '');
+        tag.textContent = idx < 0 ? (isTouch ? T('♪ радио выключено', '♪ radio off') : T('♪ радио выключено · Q/E', '♪ radio off · Q/E')) : '♪ ' + RADIO[idx].name + (state === 'tuning' ? '...' : '');
       }
       if (btn) btn.classList.toggle('on', active && idx >= 0 && state === 'on');
     }
@@ -1736,7 +1763,7 @@
     // станция молчит: следующая; все молчат - выключаемся
     function fail() {
       if (!active || idx < 0 || state === 'off') return;
-      if (++fails >= RADIO.length) { fails = 0; halt(); state = 'off'; show(); toast('Радио не ловит - ни одна станция не отвечает', 2600); return; }
+      if (++fails >= RADIO.length) { fails = 0; halt(); state = 'off'; show(); toast(T('Радио не ловит - ни одна станция не отвечает', 'No radio signal - no station is answering'), 2600); return; }
       idx = (idx + dir + RADIO.length) % RADIO.length;
       tune();
     }
@@ -1867,26 +1894,26 @@
       const bv = $('btnVoice'), bm = $('btnMic');
       bv.classList.toggle('on', on);
       bv.setAttribute('aria-pressed', on ? 'true' : 'false');
-      bv.setAttribute('aria-label', on ? 'Выйти из голосового чата' : 'Подключиться к голосовому чату');
-      bv.title = on ? 'Голосовой чат: подключены (нажмите, чтобы выйти)' : 'Подключиться к голосовому чату';
+      bv.setAttribute('aria-label', on ? T('Выйти из голосового чата', 'Leave voice chat') : T('Подключиться к голосовому чату', 'Join voice chat'));
+      bv.title = on ? T('Голосовой чат: подключены (нажмите, чтобы выйти)', 'Voice chat: connected (press to leave)') : T('Подключиться к голосовому чату', 'Join voice chat');
       bm.hidden = !on;
       bm.classList.toggle('muted', muted);
       bm.setAttribute('aria-pressed', muted ? 'false' : 'true');
-      bm.setAttribute('aria-label', muted ? 'Включить микрофон' : 'Выключить микрофон');
-      bm.title = muted ? 'Микрофон выключен (T)' : 'Микрофон включён (T)';
+      bm.setAttribute('aria-label', muted ? T('Включить микрофон', 'Unmute microphone') : T('Выключить микрофон', 'Mute microphone'));
+      bm.title = muted ? T('Микрофон выключен (T)', 'Microphone muted (T)') : T('Микрофон включён (T)', 'Microphone on (T)');
     }
     async function start() {
       if (on || starting) return;
       Sound.init();
       const ac = Sound.ctx();
-      if (!ac) { toast('Звук в этом браузере недоступен'); return; }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Браузер не даёт доступ к микрофону', 3000); return; }
+      if (!ac) { toast(T('Звук в этом браузере недоступен', 'Sound is not available in this browser')); return; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast(T('Браузер не даёт доступ к микрофону', "This browser doesn't allow microphone access"), 3000); return; }
       starting = true;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
       } catch (_) {
         starting = false;
-        toast('Нет доступа к микрофону - разрешите его в браузере', 3500);
+        toast(T('Нет доступа к микрофону - разрешите его в браузере', 'No microphone access - allow it in your browser'), 3500);
         return;
       }
       starting = false;
@@ -1900,7 +1927,7 @@
       on = true; muted = false; talking = false; talkUntil = 0; floor = -60; fill = 0; acc = 0; cnt = 0; pos = 0; prev = null;
       if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'voice', on: true }));
       sync();
-      toast('Вы в голосовом чате: говорите - вас слышат все подключённые', 3000);
+      toast(T('Вы в голосовом чате: говорите - вас слышат все подключённые', "You're in voice chat: everyone connected can hear you"), 3000);
     }
     function stop(silent) {
       if (!on) return;
@@ -1916,7 +1943,7 @@
       muted = !muted;
       if (muted) talking = false;
       sync();
-      toast(muted ? 'Микрофон выключен' : 'Микрофон включён', 1500);
+      toast(muted ? T('Микрофон выключен', 'Microphone muted') : T('Микрофон включён', 'Microphone on'), 1500);
     }
     // кадр от другого игрока: [1][номер игрока 2 байта][pred 2 байта][idx][данные]
     function onPacket(ab) {
@@ -2265,11 +2292,11 @@
   function connect() {
     const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
     let ws;
-    try { ws = new WebSocket(url); } catch (_) { setStatus('Не удалось подключиться'); return; }
+    try { ws = new WebSocket(url); } catch (_) { setStatus(T('Не удалось подключиться', "Couldn't connect")); return; }
     ws.binaryType = 'arraybuffer';
     S.ws = ws;
     let welcomed = false;
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: S.room, name: S.name, mode: S.mode || 'ffa' }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: S.room, name: S.name, mode: S.mode || 'ffa', lang: RU ? 'ru' : 'en' }));
     ws.onmessage = ev => {
       if (typeof ev.data !== 'string') { Voice.onPacket(ev.data); return; } // голос других игроков
       let m;
@@ -2285,9 +2312,9 @@
       if (S.inGame) { reconnectSoon(S.restarting ? 'update' : 'lost'); return; }
       if (!welcomed && S.retries < 20) {
         S.retries++;
-        setStatus(`Сервер просыпается, пробуем ещё раз (${S.retries})...`);
+        setStatus(T(`Сервер просыпается, пробуем ещё раз (${S.retries})...`, `The server is waking up, trying again (${S.retries})...`));
         setTimeout(() => { if (!S.leaving && !S.inGame) connect(); }, 2500);
-      } else setStatus('Не удалось подключиться. Проверьте интернет и попробуйте ещё раз.');
+      } else setStatus(T('Не удалось подключиться. Проверьте интернет и попробуйте ещё раз.', "Couldn't connect. Check your internet connection and try again."));
     };
     ws.onerror = () => {};
   }
@@ -2302,14 +2329,14 @@
     Voice.stop(true);
     S.reconnects = (S.reconnects || 0) + 1;
     if (S.reconnects > 30) { $('lost').hidden = false; return; }
-    if (S.reconnects === 1) toast(why === 'update' ? 'Сервер обновляется - переподключаемся...' : 'Связь прервалась - переподключаемся...', 4000);
+    if (S.reconnects === 1) toast(why === 'update' ? T('Сервер обновляется - переподключаемся...', 'The server is updating - reconnecting...') : T('Связь прервалась - переподключаемся...', 'Connection lost - reconnecting...'), 4000);
     setTimeout(() => { if (!S.leaving && S.inGame && !S.ws) connect(); }, S.reconnects === 1 ? 1500 : 2500);
   }
 
   function handle(m) {
     switch (m.t) {
       case 'welcome': onWelcome(m); break;
-      case 'bye': S.restarting = true; toast('Сервер обновляется - сейчас переподключимся', 3500); break;
+      case 'bye': S.restarting = true; toast(T('Сервер обновляется - сейчас переподключимся', 'The server is updating - reconnecting in a moment'), 3500); break;
       case 'err': S.leaving = true; setStatus(m.text); if (S.ws) S.ws.close(); break;
       case 'tp': onTeleport(m); break;
       case 'car': {
@@ -2319,27 +2346,27 @@
         const hv = m.kind === 3 ? KV.VEH.swat : m.kind === 4 ? KV.VEH.tank : m.kind === 5 || m.kind === 6 ? KV.VEH.moto : null;
         if (hv) { S.car.maxV = hv.maxV; S.car.acc = hv.acc; S.car.crush = !!hv.crush; S.car.steer = hv.steer || 0; S.car.moto = m.kind === 5 || m.kind === 6; }
         S.me.sprinting = false;
-        if (m.kind === 4) toast(isTouch ? 'Вы в танке! Кнопка атаки - выстрел из пушки' : 'Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', 3000);
-        else if (m.kind === 2) toast('Скорая: пока сидите, лечит 3 здоровья в секунду', 2600);
-        else if (m.kind === 5 || m.kind === 6) toast(isTouch ? 'Мотоцикл: очень быстрый, но вас видно и можно подстрелить' : 'Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Он быстрый, но вас видно и можно подстрелить', 3400);
-        else toast(isTouch ? 'Вы за рулём. Чтобы выйти - кнопка «Выйти»' : 'Вы за рулём: W/S - газ и тормоз, A/D - руль, пробел - ручник, F - выйти, Q/E - радио');
+        if (m.kind === 4) toast(isTouch ? T('Вы в танке! Кнопка атаки - выстрел из пушки', "You're in a tank! The attack button fires the cannon") : T('Вы в танке! W/S/A/D - ехать, мышь - выстрел из пушки, F - выйти', "You're in a tank! W/S/A/D - drive, mouse - fire the cannon, F - get out"), 3000);
+        else if (m.kind === 2) toast(T('Скорая: пока сидите, лечит 3 здоровья в секунду', 'Ambulance: heals 3 health per second while you sit inside'), 2600);
+        else if (m.kind === 5 || m.kind === 6) toast(isTouch ? T('Мотоцикл: очень быстрый, но вас видно и можно подстрелить', "Motorcycle: very fast, but you're exposed and can be shot") : T('Мотоцикл: W/S - газ и тормоз, A/D - руль, F - слезть. Он быстрый, но вас видно и можно подстрелить', "Motorcycle: W/S - gas and brake, A/D - steer, F - get off. It's fast, but you're exposed and can be shot"), 3400);
+        else toast(isTouch ? T('Вы за рулём. Чтобы выйти - кнопка «Выйти»', "You're driving. To get out, press \"Get out\"") : T('Вы за рулём: W/S - газ и тормоз, A/D - руль, пробел - ручник, F - выйти, Q/E - радио', "You're driving: W/S - gas and brake, A/D - steer, Space - handbrake, F - get out, Q/E - radio"));
         updateHud(true);
         break;
       }
       case 'shop':
         // круги: больница, оружейный, автомастерская
-        if (m.need) toast(m.paid ? `Вылечено на $${m.paid}, дальше нужно $${m.need}` : `Нужно $${m.need}`, 1800);
-        else if (m.full) toast('Здоровье и так полное', 1500);
-        else if (m.have) toast(WEAPONS[m.w].noAmmo ? `${WEAPONS[m.w].name} уже есть` : `${WEAPONS[m.w].name}: патронов и так полно`, 1600);
-        else if (m.k === 'med') { Sound.cash(); toast(m.part ? `Больница: подлечились (-$${m.ok})` : `Больница: здоровье 100 (-$${m.ok})`, 2000); }
-        else if (m.k === 'gun') { Sound.cash(); toast(`Куплено: ${WEAPONS[m.w].name} (-$${m.ok})`, 2000); }
-        else { Sound.cash(); toast(`Мастерская: перекрашено, починено, розыск снят (-$${m.ok})`, 3000); }
+        if (m.need) toast(m.paid ? T(`Вылечено на $${m.paid}, дальше нужно $${m.need}`, `Healed for $${m.paid}, you need $${m.need} more`) : T(`Нужно $${m.need}`, `You need $${m.need}`), 1800);
+        else if (m.full) toast(T('Здоровье и так полное', 'Health is already full'), 1500);
+        else if (m.have) toast(WEAPONS[m.w].noAmmo ? T(`${WEAPONS[m.w].name} уже есть`, `${WEAPONS[m.w].name}: already yours`) : T(`${WEAPONS[m.w].name}: патронов и так полно`, `${WEAPONS[m.w].name}: ammo already full`), 1600);
+        else if (m.k === 'med') { Sound.cash(); toast(m.part ? T(`Больница: подлечились (-$${m.ok})`, `Hospital: patched up (-$${m.ok})`) : T(`Больница: здоровье 100 (-$${m.ok})`, `Hospital: health 100 (-$${m.ok})`), 2000); }
+        else if (m.k === 'gun') { Sound.cash(); toast(T(`Куплено: ${WEAPONS[m.w].name} (-$${m.ok})`, `Bought: ${WEAPONS[m.w].name} (-$${m.ok})`), 2000); }
+        else { Sound.cash(); toast(T(`Мастерская: перекрашено, починено, розыск снят (-$${m.ok})`, `Garage: repainted, repaired, wanted level cleared (-$${m.ok})`), 3000); }
         updateHud(true);
         break;
       case 'loot':
         // полицейская машина и грузовик спецназа: ствол заряжен, броня прибавилась
         Sound.pickup();
-        toast(`${WEAPONS[m.w].name}: полный запас, броня ${m.ar}`, 2400);
+        toast(T(`${WEAPONS[m.w].name}: полный запас, броня ${m.ar}`, `${WEAPONS[m.w].name}: full ammo, armor ${m.ar}`), 2400);
         break;
       case 'ctp':
         if (S.car) { S.car.x = m.x; S.car.y = m.y; S.car.a = m.a; S.car.v = 0; S.car.sx = 0; S.car.sy = 0; S.car.tp = m.tp; }
@@ -2401,7 +2428,7 @@
     document.body.classList.add('playing');
     S.gang = m.mode === 'gang';
     S.mode = S.gang ? 'gang' : 'ffa';
-    $('boardRoom').textContent = 'Комната ' + S.room + (S.gang ? ' · Банда' : '');
+    $('boardRoom').textContent = T('Комната ', 'Room ') + S.room + (S.gang ? T(' · Банда', ' · Gang') : '');
     S.botsOn = m.bots !== false;
     S.humans = [];
     syncBotsBtn();
@@ -2409,7 +2436,7 @@
     syncA11y();
     updateRotateHint();
     updateHud(true);
-    toast(S.gang ? 'Банда ' + S.room + ': друг друга не раним, розыск общий. Зовите своих через шестерёнку' : 'Комната ' + S.room + ' - пригласите друзей через шестерёнку', 4000);
+    toast(S.gang ? T('Банда ', 'Gang ') + S.room + T(': друг друга не раним, розыск общий. Зовите своих через шестерёнку', ': no friendly fire, shared wanted level. Invite your crew from the gear menu') : T('Комната ', 'Room ') + S.room + T(' - пригласите друзей через шестерёнку', ' - invite friends from the gear menu'), 4000);
   }
 
   function onTeleport(m) {
@@ -2490,8 +2517,8 @@
     if ((money || 0) !== S.money) { const up = (money || 0) - S.money; S.money = money || 0; syncMoney(up > 0 ? up : 0); }
     if ((stars || 0) !== S.stars) {
       if ((stars || 0) > S.stars) {
-        const who = ['', '', '', ' - едет спецназ!', ' - летит вертолёт!', ' - армия и танки!'][stars] || '';
-        toast(stars === 1 ? (S.gang ? 'Банду разыскивает полиция!' : 'Вас разыскивает полиция!') : `Розыск${S.gang ? ' банды' : ''}: ${'★'.repeat(stars)}${who}`, 2600);
+        const who = (RU ? ['', '', '', ' - едет спецназ!', ' - летит вертолёт!', ' - армия и танки!'] : ['', '', '', ' - SWAT incoming!', ' - helicopter inbound!', ' - army and tanks!'])[stars] || '';
+        toast(stars === 1 ? (S.gang ? T('Банду разыскивает полиция!', 'The police are after your gang!') : T('Вас разыскивает полиция!', 'The police are after you!')) : T(`Розыск${S.gang ? ' банды' : ''}`, `Wanted${S.gang ? ' (gang)' : ''}`) + `: ${'★'.repeat(stars)}${who}`, 2600);
         Sound.siren1();
       }
       S.stars = stars || 0;
@@ -2527,11 +2554,11 @@
     const map = S.map;
     if (m.pj) for (const info of m.pj) {
       const isNew = upsertPlayer(info);
-      if (isNew && info[0] !== S.myId && now - S.inGameSince > 1500 && !info[3]) feed(`${info[1]} в игре`);
+      if (isNew && info[0] !== S.myId && now - S.inGameSince > 1500 && !info[3]) feed(T(`${info[1]} в игре`, `${info[1]} joined`));
     }
     if (m.pl) for (const id of m.pl) {
       const p = S.players.get(id);
-      if (p && !p.bot) feed(`${p.name} вышел`);
+      if (p && !p.bot) feed(T(`${p.name} вышел`, `${p.name} left`));
       S.players.delete(id);
     }
     if (m.sp) for (const [id, x, y] of m.sp) {
@@ -2606,9 +2633,9 @@
       if (pid !== S.myId) continue;
       if (kind === PK.MONEY) { Sound.cash(); toast(`+$${amount}`, 1200); continue; }
       if (kind === PK.SHROOM) { Sound.gulp(); startTrip(); continue; }
-      if (kind === PK.STAR) { Sound.pickup(); toast('Минус одна звезда розыска', 2000); continue; }
+      if (kind === PK.STAR) { Sound.pickup(); toast(T('Минус одна звезда розыска', 'One wanted star gone'), 2000); continue; }
       Sound.pickup();
-      toast(kind === PK.WEAPON ? `Подобрано: ${WEAPONS[w].name}` : kind === PK.AMMO ? `Патроны: ${WEAPONS[w].name}` : kind === PK.HEALTH ? 'Аптечка' : 'Бронежилет');
+      toast(kind === PK.WEAPON ? T(`Подобрано: ${WEAPONS[w].name}`, `Picked up: ${WEAPONS[w].name}`) : kind === PK.AMMO ? T(`Патроны: ${WEAPONS[w].name}`, `Ammo: ${WEAPONS[w].name}`) : kind === PK.HEALTH ? T('Аптечка', 'Medkit') : T('Бронежилет', 'Body armor'));
     }
     if (m.m) for (const id of m.m) {
       const p = S.players.get(id);
@@ -2628,10 +2655,10 @@
     if (m.hn) for (const id of m.hn) { const v = S.vehicles.get(id); if (v) Sound.horn(v.rx, v.ry); else if (id === S.me.vehicle) Sound.horn(); }
     if (m.cr) for (const [x, y, s] of m.cr) { Sound.crash(x, y, s); spawn('spark', x, y, Math.min(12, 3 + s), '#ffe6a0', 5, 0.3, 0.05); spawn('debris', x, y, 3, '#666', 3, 0.5, 0.08); }
     if (m.ck) for (const [vid, pid, x, y] of m.ck) { Sound.thud(x, y); spawn('blood', x, y, 8, '#9b0f0f', 4, 0.5, 0.12); }
-    if (m.vf) for (const id of m.vf) { const v = S.vehicles.get(id); if (v) Sound.fire(v.rx, v.ry); if (id === S.me.vehicle) toast('Машина горит - выходите!', 2500); }
+    if (m.vf) for (const id of m.vf) { const v = S.vehicles.get(id); if (v) Sound.fire(v.rx, v.ry); if (id === S.me.vehicle) toast(T('Машина горит - выходите!', 'Your car is on fire - get out!'), 2500); }
     if (m.vx) for (const id of m.vx) S.vehicles.delete(id);
     // вертолёт: сбит - падает, крутясь; исчез - разбился (взрыв приходит отдельно) или улетел
-    if (m.hf) for (const id of m.hf) { const h = S.helis.get(id); if (h && !h.fallAt) h.fallAt = now; feed('Полицейский вертолёт сбит!'); }
+    if (m.hf) for (const id of m.hf) { const h = S.helis.get(id); if (h && !h.fallAt) h.fallAt = now; feed(T('Полицейский вертолёт сбит!', 'Police helicopter down!')); }
     if (m.hx) for (const id of m.hx) S.helis.delete(id);
     if (m.gt) for (const [, x, y, owner] of m.gt) if (owner !== S.myId) Sound.toss(x, y);
     // деревянное горит
@@ -2644,11 +2671,11 @@
     }
     if (m.nk) for (const [, x, y] of m.nk) { spawn('blood', x, y, 10, '#9b0f0f', 3.5, 0.6, 0.12); addDecal('blood', x, y, 0.55); Sound.deathAt(x, y); }
     if (m.rv) for (const [id] of m.rv) { const n = S.peds.get(id); if (n) { spawn('spark', n.rx, n.ry, 10, '#7dff9a', 3, 0.6, 0.06); spawn('flash', n.rx, n.ry, 2, '#b9ffc9', 1, 0.4, 0.4); } }
-    if (m.vc) for (const [id, on] of m.vc) if (id !== S.myId) feed(`${nameOf(id)} ${on ? 'подключился к голосовому чату' : 'вышел из голосового чата'}`);
+    if (m.vc) for (const [id, on] of m.vc) if (id !== S.myId) feed(`${nameOf(id)} ${on ? T('подключился к голосовому чату', 'joined voice chat') : T('вышел из голосового чата', 'left voice chat')}`);
     if (m.bo) for (const [on, who] of m.bo) {
       S.botsOn = !!on;
       syncBotsBtn();
-      toast(on ? `${who} включил ботов` : `${who} выключил ботов`, 2500);
+      toast(on ? T(`${who} включил ботов`, `${who} turned bots on`) : T(`${who} выключил ботов`, `${who} turned bots off`), 2500);
     }
     if (m.en) for (const [vid, pid] of m.en) { if (pid !== S.myId) { const v = S.vehicles.get(vid); if (v) Sound.doorOpen(); } }
   }
@@ -2658,20 +2685,20 @@
     const vx = victim === S.myId ? S.me.x : vp ? vp.rx : 0, vy = victim === S.myId ? S.me.y : vp ? vp.ry : 0;
     spawn('blood', vx, vy, 12, '#9b0f0f', 3.5, 0.6, 0.12);
     addDecal('blood', vx, vy, 0.55);
-    const wn = w >= 0 ? WEAPONS[w].name : w === -2 ? 'машина' : 'взрыв';
+    const wn = w >= 0 ? WEAPONS[w].name : w === -2 ? T('машина', 'car') : T('взрыв', 'explosion');
     const self = !killer || killer === victim;
     const mine = killer === S.myId || victim === S.myId;
-    if (self) feed(`${esc(nameOf(victim))} погиб: <span class="w">${esc(wn)}</span>`, mine, true);
+    if (self) feed(T(`${esc(nameOf(victim))} погиб: <span class="w">${esc(wn)}</span>`, `${esc(nameOf(victim))} died: <span class="w">${esc(wn)}</span>`), mine, true);
     else feed(`${esc(nameOf(killer))} <span class="w">[${esc(wn)}]</span> ${esc(nameOf(victim))}`, mine, true);
     if (victim === S.myId) {
       S.me.alive = false;
       S.me.vehicle = 0; S.car = null;
-      $('deathBy').textContent = killer <= -100 ? NPC_KILL[-100 - killer] || 'Вы погибли' : self ? (w === -2 ? 'Вас сбила машина' : 'Вы погибли') : `Вас убил ${nameOf(killer)}`;
+      $('deathBy').textContent = killer <= -100 ? NPC_KILL[-100 - killer] || T('Вы погибли', 'You died') : self ? (w === -2 ? T('Вас сбила машина', 'Run over by a car') : T('Вы погибли', 'You died')) : T(`Вас убил ${nameOf(killer)}`, `Killed by ${nameOf(killer)}`);
       $('deathScreen').hidden = false;
       Sound.death();
     } else {
       Sound.deathAt(vx, vy);
-      if (killer === S.myId) toast(`Вы убили: ${nameOf(victim)}`);
+      if (killer === S.myId) toast(T(`Вы убили: ${nameOf(victim)}`, `You killed ${nameOf(victim)}`));
     }
   }
 
@@ -2760,7 +2787,7 @@
       b.className = 'sp-item';
       b.innerHTML = `${n < 10 ? `<span class="k">${(n + 1) % 10}</span>` : ''}${ICONS[w]}<span class="nm">${WEAPONS[w].name}</span><span class="pr">$${KV.GUN_PRICE[w]}</span>`;
       b.title = `${WEAPONS[w].name} - $${KV.GUN_PRICE[w]}`;
-      b.setAttribute('aria-label', `Купить: ${WEAPONS[w].name}, $${KV.GUN_PRICE[w]}`);
+      b.setAttribute('aria-label', T(`Купить: ${WEAPONS[w].name}, $${KV.GUN_PRICE[w]}`, `Buy: ${WEAPONS[w].name}, $${KV.GUN_PRICE[w]}`));
       onPress(b, () => buyGun(w));
       grid.appendChild(b);
       shopItems.push({ w, b });
@@ -2796,7 +2823,7 @@
       const ww = WEAPONS[w], full = ww.noAmmo ? S.me.ammo[w] >= 0 : S.me.ammo[w] >= ww.max;
       b.classList.toggle('full', full);
       b.classList.toggle('poor', !full && S.money < KV.GUN_PRICE[w]);
-      b.querySelector('.pr').textContent = full ? (ww.noAmmo ? 'есть' : 'полно') : '$' + KV.GUN_PRICE[w];
+      b.querySelector('.pr').textContent = full ? (ww.noAmmo ? T('есть', 'owned') : T('полно', 'full')) : '$' + KV.GUN_PRICE[w];
     }
   }
 
@@ -2835,17 +2862,17 @@
   function updateHud(force) {
     const me = S.me;
     $('hpFill').style.width = clamp(me.hp, 0, 100) + '%';
-    $('hpText').textContent = 'Здоровье ' + Math.max(0, Math.round(me.hp));
+    $('hpText').textContent = T('Здоровье ', 'Health ') + Math.max(0, Math.round(me.hp));
     $('arFill').style.width = clamp(me.ar, 0, 100) + '%';
-    $('arText').textContent = 'Броня ' + Math.round(me.ar);
+    $('arText').textContent = T('Броня ', 'Armor ') + Math.round(me.ar);
     $('stFill').style.width = clamp(me.stamina, 0, 100) + '%';
-    $('stText').textContent = me.sprinting ? 'Рывок!' : 'Выносливость';
+    $('stText').textContent = me.sprinting ? T('Рывок!', 'Sprint!') : T('Выносливость', 'Stamina');
     const v = me.vehicle ? S.vehicles.get(me.vehicle) : null;
     $('carBar').hidden = !v;
     if (v) {
-      const what = v.kind === 4 ? 'Танк' : v.kind === 3 ? 'Грузовик' : v.moto ? 'Мотоцикл' : 'Машина';
+      const what = v.kind === 4 ? T('Танк', 'Tank') : v.kind === 3 ? T('Грузовик', 'Truck') : v.moto ? T('Мотоцикл', 'Motorcycle') : T('Машина', 'Car');
       $('carFill').style.width = clamp(v.hp, 0, 100) + '%';
-      $('carText').textContent = v.fl & 2 ? what + ' горит!' : what + ' ' + Math.round(v.hp) + '%';
+      $('carText').textContent = v.fl & 2 ? what + T(' горит!', ' on fire!') : what + ' ' + Math.round(v.hp) + '%';
     }
     renderMiniBoard();
     const sig = me.cur + '|' + me.ammo.join(',') + '|' + me.alive;
@@ -2853,7 +2880,7 @@
       hudSig = sig;
       // у щита на значке - патроны пистолета (атака со щитом - из него)
       // 10 000 патронов минигана - «10к», чтобы ячейка не раздувалась
-      const num = n => (n >= 10000 ? Math.floor(n / 1000) + 'к' : String(n));
+      const num = n => (n >= 10000 ? Math.floor(n / 1000) + T('к', 'k') : String(n));
       const cnt = i => (i === W.FISTS ? '∞' : WEAPONS[i].noAmmo ? (me.ammo[W.PISTOL] > 0 ? num(me.ammo[W.PISTOL]) : '—') : num(Math.max(0, me.ammo[i])));
       let pos = 0;
       slotEls.forEach((el, i) => {
@@ -2868,7 +2895,7 @@
       // на кнопке смены оружия - значок текущего оружия и патроны
       $('btnWeaponIcon').innerHTML = ICONS[me.cur] || ICONS[0];
       $('btnWeaponText').textContent = cnt(me.cur);
-      $('btnWeapon').setAttribute('aria-label', `Сменить оружие (сейчас: ${WEAPONS[me.cur].name})`);
+      $('btnWeapon').setAttribute('aria-label', T(`Сменить оружие (сейчас: ${WEAPONS[me.cur].name})`, `Switch weapon (current: ${WEAPONS[me.cur].name})`));
       layoutWeaponBar();
     } else if (performance.now() - wbarAt > 1000) layoutWeaponBar(); // справа выросла таблица счёта и т.п.
     // кнопки справа
@@ -2884,10 +2911,10 @@
     const hint = $('keyHint');
     if (input.mode === 'mouse' && me.alive && (me.vehicle || car)) {
       hint.hidden = false;
-      hint.innerHTML = me.vehicle ? (S.car && S.car.moto ? '<b>F</b> - слезть' : '<b>F</b> - выйти') + ' · <b>H</b> - гудок · <b>Q/E</b> - радио'
-        : car && car.moto ? '<b>F</b> - сесть на мотоцикл' : '<b>F</b> - сесть в машину';
+      hint.innerHTML = me.vehicle ? (S.car && S.car.moto ? T('<b>F</b> - слезть', '<b>F</b> - get off') : T('<b>F</b> - выйти', '<b>F</b> - get out')) + T(' · <b>H</b> - гудок · <b>Q/E</b> - радио', ' · <b>H</b> - horn · <b>Q/E</b> - radio')
+        : car && car.moto ? T('<b>F</b> - сесть на мотоцикл', '<b>F</b> - ride the motorcycle') : T('<b>F</b> - сесть в машину', '<b>F</b> - get in the car');
     } else hint.hidden = true;
-    if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? `Возрождение через ${me.respawnIn.toFixed(1)} с` : 'Возрождение...';
+    if (!me.alive && S.inGame) $('respawnIn').textContent = me.respawnIn > 0 ? T(`Возрождение через ${me.respawnIn.toFixed(1)} с`, `Respawning in ${me.respawnIn.toFixed(1)}s`) : T('Возрождение...', 'Respawning...');
   }
 
   // мини-таблица справа вверху: все игроки и их убийства; на маленьком экране - лучшие и вы
@@ -2904,8 +2931,8 @@
     if (sig === miniSig) return;
     miniSig = sig;
     $('miniBoard').innerHTML = shown.map(p =>
-      `<li class="${p.id === S.myId ? 'me' : ''}" title="${esc(p.name)}: убийств ${p.kills}, смертей ${p.deaths}"><span class="dot" style="background:${esc(p.color)}"></span><span class="nm">${esc(p.name)}</span><span class="k">${p.kills}</span></li>`).join('') +
-      (rest > 0 ? `<li class="more">и ещё ${rest}</li>` : '');
+      `<li class="${p.id === S.myId ? 'me' : ''}" title="${esc(p.name)}: ${T(`убийств ${p.kills}, смертей ${p.deaths}`, `${p.kills} kills, ${p.deaths} deaths`)}"><span class="dot" style="background:${esc(p.color)}"></span><span class="nm">${esc(p.name)}</span><span class="k">${p.kills}</span></li>`).join('') +
+      (rest > 0 ? `<li class="more">${T(`и ещё ${rest}`, `+${rest} more`)}</li>` : '');
   }
 
   function renderBoard() {
@@ -2942,19 +2969,19 @@
     const el = $('stars');
     el.hidden = !S.stars;
     el.querySelectorAll('i').forEach((s, i) => s.classList.toggle('on', i < S.stars));
-    el.setAttribute('aria-label', S.stars ? `Розыск: ${S.stars} из 5` : 'Розыск: нет');
+    el.setAttribute('aria-label', S.stars ? T(`Розыск: ${S.stars} из 5`, `Wanted: ${S.stars} of 5`) : T('Розыск: нет', 'Wanted: none'));
     if (flash) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   }
   function syncBotsBtn() {
     const b = $('btnBots');
     b.setAttribute('aria-pressed', S.botsOn ? 'true' : 'false');
-    b.textContent = S.botsOn ? 'Боты: включены' : 'Боты: выключены';
+    b.textContent = S.botsOn ? T('Боты: включены', 'Bots: on') : T('Боты: выключены', 'Bots: off');
   }
   $('btnBots').addEventListener('click', () => send({ t: 'bots', on: !S.botsOn }));
 
   function syncSoundBtn() {
     $('btnSound').setAttribute('aria-pressed', Sound.on ? 'true' : 'false');
-    $('btnSound').textContent = Sound.on ? 'Звук: включён' : 'Звук: выключен';
+    $('btnSound').textContent = Sound.on ? T('Звук: включён', 'Sound: on') : T('Звук: выключен', 'Sound: off');
   }
   $('btnSound').addEventListener('click', () => { Sound.init(); Sound.toggle(); syncSoundBtn(); Radio.sync(); });
   $('btnZoom').addEventListener('click', () => cycleZoom());
@@ -2963,12 +2990,12 @@
   $('btnInvite').addEventListener('click', async () => {
     showGear(false);
     const url = location.origin + '/?room=' + encodeURIComponent(S.room) + (S.gang ? '&mode=gang' : '');
-    const text = S.gang ? 'Заходи ко мне в банду в Квартале - отбиваемся от полиции вместе:' : 'Заходи ко мне в Квартал - перестрелка в городе:';
+    const text = S.gang ? T('Заходи ко мне в банду в Квартале - отбиваемся от полиции вместе:', 'Join my gang in City Block - we fight off the police together:') : T('Заходи ко мне в Квартал - перестрелка в городе:', 'Join me in City Block - a top-down city shootout:');
     if (navigator.share && isTouch) {
-      try { await navigator.share({ title: 'Квартал', text, url }); return; } catch (_) {}
+      try { await navigator.share({ title: T('Квартал', 'City Block'), text, url }); return; } catch (_) {}
     }
-    try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована - отправьте её друзьям'); }
-    catch (_) { prompt('Скопируйте ссылку и отправьте друзьям:', url); }
+    try { await navigator.clipboard.writeText(url); toast(T('Ссылка скопирована - отправьте её друзьям', 'Link copied - send it to your friends')); }
+    catch (_) { prompt(T('Скопируйте ссылку и отправьте друзьям:', 'Copy the link and send it to your friends:'), url); }
   });
   $('btnVoice').addEventListener('click', () => { if (Voice.isOn()) Voice.stop(); else Voice.start(); });
   $('btnMic').addEventListener('click', () => Voice.toggleMute());
@@ -3223,7 +3250,7 @@
       g.fillStyle = '#ffffff'; g.strokeStyle = '#000'; g.lineWidth = Math.max(1, u);
       g.beginPath(); g.moveTo(z, 0); g.lineTo(-z * 0.7, z * 0.65); g.lineTo(-z * 0.35, 0); g.lineTo(-z * 0.7, -z * 0.65); g.closePath(); g.fill(); g.stroke();
       g.restore();
-      drawMapName(g, 'ты', toX(S.me.x), toY(S.me.y) - z - 1.5 * u, u, '#ffd23f');
+      drawMapName(g, T('ты', 'you'), toX(S.me.x), toY(S.me.y) - z - 1.5 * u, u, '#ffd23f');
     }
   }
 
@@ -3256,22 +3283,42 @@
 
   const nameInput = $('nameInput');
   try { nameInput.value = localStorage.getItem('kv_name') || ''; } catch (_) {}
+
+  // Переключатель языка справа сверху: запоминаем выбор и перезагружаем страницу (комната из адреса остаётся)
+  for (const b of document.querySelectorAll('.lang-btn')) {
+    const l = b.getAttribute('data-lang');
+    b.setAttribute('aria-pressed', l === (RU ? 'ru' : 'en') ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if (l === (RU ? 'ru' : 'en')) return;
+      try {
+        localStorage.setItem('kv_lang', l);
+        const n = nameInput.value.trim().slice(0, 16);
+        if (n) localStorage.setItem('kv_name', n);
+      } catch (_) {}
+      const u = new URL(location.href);
+      u.searchParams.set('lang', l);
+      location.replace(u.href);
+    });
+  }
   const inviteRoom = cleanRoom(new URLSearchParams(location.search).get('room'));
   const inviteGang = new URLSearchParams(location.search).get('mode') === 'gang';
   const showInvite = (room, gang) => {
     $('inviteBlock').hidden = false;
     $('createBlock').hidden = true;
     $('inviteRoom').textContent = room;
-    $('inviteMode').textContent = gang ? ' - режим «Банда»: друг друга не раним, розыск общий' : '';
+    $('inviteMode').textContent = gang ? T(' - режим «Банда»: друг друга не раним, розыск общий', ' - Gang mode: no friendly fire, shared wanted level') : '';
   };
   if (inviteRoom.length >= 3) showInvite(inviteRoom, inviteGang);
 
   // режим новой комнаты: «Все против всех» или «Банда» (запоминается)
   let menuMode = 'ffa';
   try { if (localStorage.getItem('kv_mode') === 'gang') menuMode = 'gang'; } catch (_) {}
-  const MODE_NOTE = {
+  const MODE_NOTE = RU ? {
     ffa: 'Каждый сам за себя - стрелять можно в кого угодно.',
     gang: 'Все в комнате - одна банда: друг друга не раним, розыск общий - полиция гонится за всеми, отбиваемся вместе.'
+  } : {
+    ffa: 'Everyone for themselves - you can shoot anyone.',
+    gang: 'The whole room is one gang: no friendly fire and a shared wanted level - the police chase all of you, so you fight back together.'
   };
   function setMenuMode(mode) {
     menuMode = mode === 'gang' ? 'gang' : 'ffa';
@@ -3287,14 +3334,14 @@
   function join(room, mode) {
     S.mode = mode === 'gang' ? 'gang' : 'ffa';
     room = cleanRoom(room);
-    if (room.length < 3) { setStatus('Код комнаты - от 3 латинских букв или цифр'); return; }
-    S.name = nameInput.value.trim().slice(0, 16) || 'Игрок';
+    if (room.length < 3) { setStatus(T('Код комнаты - от 3 латинских букв или цифр', 'Room code: at least 3 Latin letters or digits')); return; }
+    S.name = nameInput.value.trim().slice(0, 16) || T('Игрок', 'Player');
     try { localStorage.setItem('kv_name', S.name); } catch (_) {}
     Sound.init();
     S.room = room;
     S.leaving = false;
     S.retries = 0;
-    setStatus('Подключаемся...');
+    setStatus(T('Подключаемся...', 'Connecting...'));
     if (isTouch) {
       try { const p = root.requestFullscreen && root.requestFullscreen({ navigationUI: 'hide' }); if (p && p.catch) p.catch(() => {}); } catch (_) {}
       try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (_) {}
@@ -3855,7 +3902,7 @@
       if (now < S.me.rollUntil) drawRoller(S.me.x, S.me.y, S.me.rollAng, mp ? mp.color : '#fff', 1 - (S.me.rollUntil - now) / (KV.ROLL.TIME * 1000), true);
       else drawPlayer(S.me.x, S.me.y, S.me.a, mp ? mp.color : '#fff', S.me.cur, mp ? mp.flags : 0, S.me.cur === W.SAW ? S.me.saw : S.me.punch, true, S.me.walk, S.me.moveAng, S.me.moving, S.myId * 13 + 5, 0);
       if (mp && (mp.flags & 32)) burnFx(S.me.x, S.me.y);
-      tags.push({ name: S.name || 'Вы', bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true, talk: Voice.talking() });
+      tags.push({ name: S.name || T('Вы', 'You'), bot: false, x: S.me.x, y: S.me.y - 0.62, hp: 100, me: true, talk: Voice.talking() });
     }
     if (tk > 0) drawPhantoms(now, dt, tk);
     drawBullets(now);
@@ -3983,7 +4030,7 @@
     const now = performance.now();
     S.trip = { t0: S.trip ? S.trip.t0 : now, until: now + KV.TRIP * 1000 };
     Sound.tripMusic(KV.TRIP);
-    toast('Грибочек! +50 здоровья, мир поплыл...', 2500);
+    toast(T('Грибочек! +50 здоровья, мир поплыл...', 'Mushroom! +50 health, and the world goes wobbly...'), 2500);
   }
   function endTrip() {
     if (!S.trip) return;

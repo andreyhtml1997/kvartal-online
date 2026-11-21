@@ -33,7 +33,11 @@ const PICKUP_LIFE = 120;        // с
 const PRESS_LATCH = 0.3;        // с: нажатие во время перезарядки стреляет, только если она кончится за это время
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
   '#fabed4', '#469990', '#dcbeff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#ffd8b1', '#a9a9a9', '#ffe119'];
-const BOT_NAMES = ['Шустрый', 'Бородач', 'Кепка', 'Гвоздь', 'Сова', 'Тихий', 'Мотор', 'Лапша', 'Пиксель', 'Сухарь', 'Ёжик', 'Бублик', 'Жук', 'Кабан'];
+// имена ботов - на языке того, кто создал комнату (21.11.2026)
+const BOT_NAMES = {
+  ru: ['Шустрый', 'Бородач', 'Кепка', 'Гвоздь', 'Сова', 'Тихий', 'Мотор', 'Лапша', 'Пиксель', 'Сухарь', 'Ёжик', 'Бублик', 'Жук', 'Кабан'],
+  en: ['Speedy', 'Beardy', 'Cap', 'Nail', 'Owl', 'Silent', 'Motor', 'Noodle', 'Pixel', 'Crouton', 'Hedgehog', 'Bagel', 'Beetle', 'Boar']
+};
 // деревянное: загорается от огнемёта и сгорает
 const WOOD = [];
 [B.FENCE, B.CRATE, B.BENCH, B.TREE].forEach(t => { WOOD[t] = true; });
@@ -62,6 +66,7 @@ class Room {
     // режим «Банда» (17.11.2026): все люди в комнате - одна банда: друг друга не ранят, розыск общий (npcs.gang*);
     // боты, если их включить, - чужие. Режим задаётся при создании комнаты и не меняется
     this.gang = !!(opts && opts.gang);
+    this.lang = opts && opts.lang === 'ru' ? 'ru' : 'en';
     this.seed = (Math.random() * 4294967296) >>> 0;
     this.map = generateMap(this.seed);
     this.players = new Map();
@@ -159,7 +164,8 @@ class Room {
     let n = bots.length;
     while (n < want) {
       const used = new Set(bots.map(b => b.name));
-      const name = (BOT_NAMES.find(nm => !used.has(nm + ' (бот)')) || 'Бот') + ' (бот)';
+      const botRu = this.lang === 'ru', tail = botRu ? ' (бот)' : ' (bot)';
+      const name = (BOT_NAMES[this.lang].find(nm => !used.has(nm + tail)) || (botRu ? 'Бот' : 'Bot')) + tail;
       const b = this.createPlayer(name, true);
       bots.push(b);
       this.ev.pj.push(this.publicInfo(b));

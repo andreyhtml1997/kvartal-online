@@ -19,11 +19,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await a.fill('#nameInput', 'Атаман');
     await a.click('#modeGang');
     const note = await a.textContent('#modeNote');
-    check(/одна банда/.test(note) && (await a.getAttribute('#modeGang', 'aria-checked')) === 'true', 'в меню выбрана «Банда», под кнопками подсказка');
+    check(/одна банда|one gang/.test(note) && (await a.getAttribute('#modeGang', 'aria-checked')) === 'true', 'в меню выбрана «Банда», под кнопками подсказка');
     await a.click('#btnCreate');
     await a.waitForFunction(() => window.__kv && window.__kv.S.me.alive, null, { timeout: 30000 });
     const st = await a.evaluate(() => ({ gang: window.__kv.S.gang, url: location.search, board: document.getElementById('boardRoom').textContent }));
-    check(st.gang && /mode=gang/.test(st.url) && /Банда/.test(st.board), `комната в режиме «Банда», режим в адресе (${st.url})`);
+    check(st.gang && /mode=gang/.test(st.url) && /Банда|Gang/.test(st.board), `комната в режиме «Банда», режим в адресе (${st.url})`);
 
     // по ссылке «Создать свою комнату» ведёт к выбору режима, а не сразу в игру
     const c = await (await browser.newContext()).newPage();
@@ -38,7 +38,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     b.on('pageerror', e => errors.push('B: ' + e.message));
     await b.goto(BASE + '/' + st.url);
     const invite = await b.textContent('#inviteBlock');
-    check(/Банда/.test(invite), 'в приглашении написан режим «Банда»');
+    check(/Банда|Gang/.test(invite), 'в приглашении написан режим «Банда»');
     await b.fill('#nameInput', 'Братан');
     await b.click('#btnJoin');
     await b.waitForFunction(() => window.__kv && window.__kv.S.me.alive, null, { timeout: 30000 });
@@ -70,7 +70,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const sa = await a.evaluate(() => window.__kv.S.stars), sb = await b.evaluate(() => window.__kv.S.stars);
     const toastB = await b.textContent('#toast');
     console.log(`звёзды: у первого ${sa}, у второго ${sb}; надпись у второго «${toastB}»`);
-    check(sa >= 3 && sb === sa && /банд/i.test(toastB), 'розыск общий - звёзды у обоих');
+    check(sa >= 3 && sb === sa && /банд|gang/i.test(toastB), 'розыск общий - звёзды у обоих');
   } catch (e) {
     ok = false;
     console.log('FAIL исключение:', e.message);

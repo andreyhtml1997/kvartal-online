@@ -57,9 +57,9 @@ const server = http.createServer((req, res) => {
   });
 });
 
-function cleanName(v) {
+function cleanName(v, ru) {
   const s = String(v || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 16);
-  return s || 'Игрок';
+  return s || (ru ? 'Игрок' : 'Player');
 }
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096 });
@@ -85,16 +85,17 @@ wss.on('connection', ws => {
     if (!ws.room) {
       if (msg.t !== 'join') return;
       const id = String(msg.room || '').toLowerCase();
-      if (!ROOM_RE.test(id)) { ws.send(JSON.stringify({ t: 'err', text: 'Неверный код комнаты' })); return; }
+      const ru = msg.lang === 'ru'; // язык ответов и имён ботов новой комнаты - тот, что прислал игрок (21.11.2026)
+      if (!ROOM_RE.test(id)) { ws.send(JSON.stringify({ t: 'err', text: ru ? 'Неверный код комнаты' : 'Invalid room code' })); return; }
       let room = rooms.get(id);
       if (!room) {
-        if (rooms.size >= MAX_ROOMS) { ws.send(JSON.stringify({ t: 'err', text: 'Сервер занят, попробуйте позже' })); return; }
+        if (rooms.size >= MAX_ROOMS) { ws.send(JSON.stringify({ t: 'err', text: ru ? 'Сервер занят, попробуйте позже' : 'The server is busy, please try again later' })); return; }
         // режим выбирает тот, кто создаёт комнату (он же в ссылке-приглашении); вошедшие позже играют в режиме комнаты
-        room = new Room(id, { gang: msg.mode === 'gang' });
+        room = new Room(id, { gang: msg.mode === 'gang', lang: ru ? 'ru' : 'en' });
         rooms.set(id, room);
       }
-      const p = room.addHuman(ws, cleanName(msg.name));
-      if (!p) { ws.send(JSON.stringify({ t: 'err', text: 'Комната заполнена (максимум 16 игроков)' })); return; }
+      const p = room.addHuman(ws, cleanName(msg.name, ru));
+      if (!p) { ws.send(JSON.stringify({ t: 'err', text: ru ? 'Комната заполнена (максимум 16 игроков)' : 'The room is full (16 players max)' })); return; }
       ws.room = room;
       ws.player = p;
       return;

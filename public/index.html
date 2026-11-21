@@ -1,16 +1,28 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#121419">
-  <meta name="description" content="Квартал - онлайн-перестрелка в городе с видом сверху. Каждый раз новая карта, разрушаемые стены, машины, оружие на улицах. Играйте с друзьями по ссылке на телефоне и компьютере.">
-  <title>Квартал - перестрелка в городе</title>
+  <meta name="description" content="City Block - an online top-down city shooter. A new map every game, destructible walls, cars and weapons on the streets. Play with friends via a link, on your phone or computer.">
+  <title>City Block - top-down city shooter</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap">
+  <script>
+    // Язык до отрисовки: ?lang=ru|en (запоминается) или прошлый выбор, по умолчанию английский (21.11.2026).
+    // Пока game.js не подставил русские тексты, страница скрыта, чтобы не мигал английский; страховка - 2 с.
+    (function () {
+      var h = document.documentElement, m = location.search.match(/[?&]lang=(ru|en)(?:&|$)/), l = m ? m[1] : null;
+      try { if (l) localStorage.setItem('kv_lang', l); else l = localStorage.getItem('kv_lang'); } catch (e) {}
+      if (l !== 'ru') l = 'en';
+      h.setAttribute('data-lang', l);
+      h.lang = l;
+      if (l === 'ru') { h.classList.add('i18n-wait'); setTimeout(function () { h.classList.remove('i18n-wait'); }, 2000); }
+    })();
+  </script>
   <script>
     // Настройки доступности применяем до отрисовки, чтобы не мигало
     try {
@@ -21,183 +33,187 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="game" aria-label="Игровое поле"></canvas>
+  <canvas id="game" aria-label="Game field" data-ru-aria-label="Игровое поле"></canvas>
 
   <!-- ИГРОВОЙ ИНТЕРФЕЙС -->
   <div id="hud" hidden>
-    <canvas id="minimap" role="button" tabindex="0" aria-label="Радар. Нажмите, чтобы открыть карту города"></canvas>
+    <canvas id="minimap" role="button" tabindex="0" aria-label="Radar. Press to open the city map" data-ru-aria-label="Радар. Нажмите, чтобы открыть карту города"></canvas>
 
     <div class="hud-top">
-      <div id="weaponBar" role="toolbar" aria-label="Оружие"></div>
+      <div id="weaponBar" role="toolbar" aria-label="Weapons" data-ru-aria-label="Оружие"></div>
     </div>
 
     <div class="hud-tr">
       <div class="vitals">
-        <div class="bar hp" aria-label="Здоровье"><span id="hpFill"></span><b id="hpText">Здоровье 100</b></div>
-        <div class="bar ar" aria-label="Броня"><span id="arFill"></span><b id="arText">Броня 0</b></div>
-        <div class="bar st" aria-label="Выносливость"><span id="stFill"></span><b id="stText">Выносливость</b></div>
-        <div class="bar car" id="carBar" aria-label="Машина" hidden><span id="carFill"></span><b id="carText">Машина</b></div>
+        <div class="bar hp" aria-label="Health" data-ru-aria-label="Здоровье"><span id="hpFill"></span><b id="hpText">Health 100</b></div>
+        <div class="bar ar" aria-label="Armor" data-ru-aria-label="Броня"><span id="arFill"></span><b id="arText">Armor 0</b></div>
+        <div class="bar st" aria-label="Stamina" data-ru-aria-label="Выносливость"><span id="stFill"></span><b id="stText">Stamina</b></div>
+        <div class="bar car" id="carBar" aria-label="Vehicle" data-ru-aria-label="Машина" hidden><span id="carFill"></span><b id="carText">Car</b></div>
         <div id="radioTag" class="radio-tag" aria-live="polite" hidden></div>
-        <div id="stars" class="stars" role="img" aria-label="Розыск: нет" hidden><i>★</i><i>★</i><i>★</i><i>★</i><i>★</i></div>
+        <div id="stars" class="stars" role="img" aria-label="Wanted: none" data-ru-aria-label="Розыск: нет" hidden><i>★</i><i>★</i><i>★</i><i>★</i><i>★</i></div>
         <div id="money" class="money" aria-live="polite" hidden>$ 0</div>
-        <ol id="miniBoard" aria-label="Счёт игроков"></ol>
+        <ol id="miniBoard" aria-label="Scoreboard" data-ru-aria-label="Счёт игроков"></ol>
       </div>
       <div class="hud-btns">
-      <button type="button" id="btnMenu" class="gear" aria-label="Настройки" aria-expanded="false" aria-controls="gearMenu">
+      <button type="button" id="btnMenu" class="gear" aria-label="Settings" data-ru-aria-label="Настройки" aria-expanded="false" aria-controls="gearMenu">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.4 7.4 0 0 0-1.7-1L14.4 2.4A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5c.1.2.4.3.6.2l2.5-1c.5.4 1.1.7 1.7 1l.4 2.7c0 .2.2.4.5.4h4c.3 0 .5-.2.5-.4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
       </button>
       <!-- голосовой чат: наушники - подключиться/выйти, микрофон - выключить/включить свой голос -->
-      <button type="button" id="btnVoice" class="gear" aria-label="Подключиться к голосовому чату" aria-pressed="false">
+      <button type="button" id="btnVoice" class="gear" aria-label="Join voice chat" data-ru-aria-label="Подключиться к голосовому чату" aria-pressed="false">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 3a8 8 0 0 0-8 8v6a3 3 0 0 0 3 3h1v-7H6v-2a6 6 0 0 1 12 0v2h-2v7h1a3 3 0 0 0 3-3v-6a8 8 0 0 0-8-8z"/></svg>
       </button>
-      <button type="button" id="btnMic" class="gear" hidden aria-label="Выключить микрофон" aria-pressed="true">
+      <button type="button" id="btnMic" class="gear" hidden aria-label="Mute microphone" data-ru-aria-label="Выключить микрофон" aria-pressed="true">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/><path class="slash" stroke="currentColor" stroke-width="2.4" d="M4 4l16 16"/></svg>
       </button>
       </div>
     </div>
     <ul id="feed" aria-live="polite"></ul>
 
-    <div id="gearMenu" role="dialog" aria-label="Настройки" hidden>
-      <button type="button" id="btnInvite" class="gm-item">Пригласить друзей</button>
-      <button type="button" id="btnBoard" class="gm-item">Счёт игроков <small>Tab</small></button>
-      <button type="button" id="btnMap" class="gm-item">Карта города <small>M</small></button>
-      <button type="button" id="btnBots" class="gm-item" aria-pressed="true">Боты: включены</button>
-      <button type="button" id="btnSound" class="gm-item" aria-pressed="true">Звук: включён</button>
-      <button type="button" id="btnZoom" class="gm-item">Вид: обычно</button>
-      <div class="gm-sub">Доступность</div>
-      <button type="button" class="gm-item a11y-opt" data-k="contrast" aria-pressed="false">Высокий контраст</button>
-      <button type="button" class="gm-item a11y-opt" data-k="large" aria-pressed="false">Крупный текст</button>
-      <button type="button" class="gm-item a11y-opt" data-k="motion" aria-pressed="false">Меньше тряски</button>
-      <button type="button" id="btnExit" class="gm-item danger">Выйти в меню</button>
+    <div id="gearMenu" role="dialog" aria-label="Settings" data-ru-aria-label="Настройки" hidden>
+      <button type="button" id="btnInvite" class="gm-item" data-ru="Пригласить друзей">Invite friends</button>
+      <button type="button" id="btnBoard" class="gm-item" data-ru-html="Счёт игроков &lt;small&gt;Tab&lt;/small&gt;">Scoreboard <small>Tab</small></button>
+      <button type="button" id="btnMap" class="gm-item" data-ru-html="Карта города &lt;small&gt;M&lt;/small&gt;">City map <small>M</small></button>
+      <button type="button" id="btnBots" class="gm-item" aria-pressed="true" data-ru="Боты: включены">Bots: on</button>
+      <button type="button" id="btnSound" class="gm-item" aria-pressed="true" data-ru="Звук: включён">Sound: on</button>
+      <button type="button" id="btnZoom" class="gm-item" data-ru="Вид: обычно">View: normal</button>
+      <div class="gm-sub" data-ru="Доступность">Accessibility</div>
+      <button type="button" class="gm-item a11y-opt" data-k="contrast" aria-pressed="false" data-ru="Высокий контраст">High contrast</button>
+      <button type="button" class="gm-item a11y-opt" data-k="large" aria-pressed="false" data-ru="Крупный текст">Large text</button>
+      <button type="button" class="gm-item a11y-opt" data-k="motion" aria-pressed="false" data-ru="Меньше тряски">Less shaking</button>
+      <button type="button" id="btnExit" class="gm-item danger" data-ru="Выйти в меню">Exit to menu</button>
     </div>
 
     <!-- Кнопки справа, у каждой своё место (ничего не съезжает под пальцем):
          сверху - оружие; в середине - «Сесть» (пешком) или «Гудок» (в машине); внизу - «Рывок» (пешком) или «Выйти» (в машине) -->
-    <button type="button" id="btnWeapon" class="act-btn slot-top" hidden aria-label="Сменить оружие">
+    <button type="button" id="btnWeapon" class="act-btn slot-top" hidden aria-label="Switch weapon" data-ru-aria-label="Сменить оружие">
       <span id="btnWeaponIcon" class="act-ico"></span>
-      <span id="btnWeaponText">Оружие</span>
+      <span id="btnWeaponText" data-ru="Оружие">Weapon</span>
     </button>
-    <button type="button" id="btnCar" class="act-btn slot-mid accent" hidden aria-label="Сесть в машину">
+    <button type="button" id="btnCar" class="act-btn slot-mid accent" hidden aria-label="Get in the car" data-ru-aria-label="Сесть в машину">
       <svg viewBox="0 0 32 24" width="34" height="26" aria-hidden="true"><path fill="currentColor" d="M5 14l2.4-5.6A3 3 0 0 1 10.2 6.5h11.6a3 3 0 0 1 2.8 1.9L27 14h1a2 2 0 0 1 2 2v3h-2.2a3.3 3.3 0 0 1-6.5 0h-10.6a3.3 3.3 0 0 1-6.5 0H2v-3a2 2 0 0 1 2-2zm3.3 0h15.4l-1.8-4.4a1 1 0 0 0-.9-.6H11a1 1 0 0 0-.9.6z"/></svg>
-      <span>Сесть</span>
+      <span data-ru="Сесть">Get in</span>
     </button>
-    <button type="button" id="btnHorn" class="act-btn slot-mid" hidden aria-label="Гудок">
+    <button type="button" id="btnHorn" class="act-btn slot-mid" hidden aria-label="Horn" data-ru-aria-label="Гудок">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 10v4h3l5 4V6L6 10zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
-      <span>Гудок</span>
+      <span data-ru="Гудок">Horn</span>
     </button>
-    <button type="button" id="btnRadio" class="act-btn slot-mid side" hidden aria-label="Радио: следующая станция">
+    <button type="button" id="btnRadio" class="act-btn slot-mid side" hidden aria-label="Radio: next station" data-ru-aria-label="Радио: следующая станция">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3.5 8.2L17.8 3l.7 1.9L8.9 8.4H20a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.2a1 1 0 0 1 .5-1zM8 18.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM14 12v1.6h5V12zm0 3v1.6h5V15z"/></svg>
-      <span>Радио</span>
+      <span data-ru="Радио">Radio</span>
     </button>
-    <button type="button" id="btnSprint" class="act-btn slot-low" hidden aria-label="Рывок">
+    <button type="button" id="btnSprint" class="act-btn slot-low" hidden aria-label="Sprint" data-ru-aria-label="Рывок">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 19 13v-2a5 5 0 0 1-4.3-2.4l-1-1.6a2.1 2.1 0 0 0-2.6-.8L6 8.3V13h2V9.6z"/></svg>
-      <span>Рывок</span>
+      <span data-ru="Рывок">Sprint</span>
     </button>
-    <button type="button" id="btnLeave" class="act-btn slot-low accent" hidden aria-label="Выйти из машины">
+    <button type="button" id="btnLeave" class="act-btn slot-low accent" hidden aria-label="Get out of the vehicle" data-ru-aria-label="Выйти из машины">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M10 3h9a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-9v-2h9V5h-9zm-1.6 4.6L9.8 9l-2 2H16v2H7.8l2 2-1.4 1.4L4 12z"/></svg>
-      <span>Выйти</span>
+      <span data-ru="Выйти">Get out</span>
     </button>
     <div id="keyHint" hidden></div>
-    <div id="shopPanel" class="shop-panel" role="group" aria-label="Оружейный магазин" hidden>
-      <div class="sp-title">Оружейный - выберите, что купить</div>
+    <div id="shopPanel" class="shop-panel" role="group" aria-label="Gun shop" data-ru-aria-label="Оружейный магазин" hidden>
+      <div class="sp-title" data-ru="Оружейный - выберите, что купить">Gun shop - pick what to buy</div>
       <div class="sp-grid" id="shopGrid"></div>
     </div>
 
     <div id="toast" role="status"></div>
-    <div id="rotateHint" hidden>Поверните телефон горизонтально - так видно больше</div>
+    <div id="rotateHint" hidden data-ru="Поверните телефон горизонтально - так видно больше">Turn your phone sideways to see more</div>
 
     <div id="deathScreen" hidden>
-      <div class="death-title" id="deathBy">Вас убили</div>
+      <div class="death-title" id="deathBy" data-ru="Вас убили">You were killed</div>
       <div class="death-sub" id="respawnIn"></div>
     </div>
 
     <div id="board" hidden>
       <div class="board-card">
-        <div class="board-head"><strong>Счёт</strong><span id="boardRoom"></span></div>
+        <div class="board-head"><strong data-ru="Счёт">Score</strong><span id="boardRoom"></span></div>
         <table>
-          <thead><tr><th>Игрок</th><th>Убийств</th><th>Смертей</th><th>Мирные</th><th>Полиция</th></tr></thead>
+          <thead><tr><th data-ru="Игрок">Player</th><th data-ru="Убийств">Kills</th><th data-ru="Смертей">Deaths</th><th data-ru="Мирные">Civilians</th><th data-ru="Полиция">Police</th></tr></thead>
           <tbody id="boardBody"></tbody>
         </table>
-        <button type="button" id="btnBoardClose" class="btn small">Закрыть</button>
+        <button type="button" id="btnBoardClose" class="btn small" data-ru="Закрыть">Close</button>
       </div>
     </div>
 
     <div id="bigmap" hidden>
-      <canvas id="bigmapCanvas" aria-label="Карта города"></canvas>
-      <div class="bm-hint">Нажмите, чтобы закрыть</div>
+      <canvas id="bigmapCanvas" aria-label="City map" data-ru-aria-label="Карта города"></canvas>
+      <div class="bm-hint" data-ru="Нажмите, чтобы закрыть">Click or tap to close</div>
     </div>
 
     <div id="lost" hidden>
       <div class="board-card">
-        <p><strong>Связь с сервером потеряна</strong></p>
-        <button type="button" id="btnReconnect" class="btn primary">Переподключиться</button>
-        <button type="button" id="btnLostMenu" class="btn small">В меню</button>
+        <p><strong data-ru="Связь с сервером потеряна">Lost connection to the server</strong></p>
+        <button type="button" id="btnReconnect" class="btn primary" data-ru="Переподключиться">Reconnect</button>
+        <button type="button" id="btnLostMenu" class="btn small" data-ru="В меню">Back to menu</button>
       </div>
     </div>
   </div>
 
   <!-- МЕНЮ -->
   <main id="menu">
+    <div class="lang-switch" role="group" aria-label="Language" data-ru-aria-label="Язык">
+      <button type="button" class="lang-btn" data-lang="en" aria-pressed="true">EN</button>
+      <button type="button" class="lang-btn" data-lang="ru" aria-pressed="false">RU</button>
+    </div>
     <div class="menu-card">
-      <h1 class="logo">КВАРТАЛ</h1>
-      <p class="tag">Перестрелка в городе с видом сверху. Каждый раз новая карта, оружие появляется на улицах, машины можно угнать, а стены - разнести.</p>
+      <h1 class="logo" data-ru="КВАРТАЛ">CITY BLOCK</h1>
+      <p class="tag" data-ru="Перестрелка в городе с видом сверху. Каждый раз новая карта, оружие появляется на улицах, машины можно угнать, а стены - разнести.">Top-down city shootout. A new map every game, weapons on the streets, cars to steal and walls to blow up.</p>
 
-      <label class="lbl" for="nameInput">Ваше имя</label>
-      <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="Игрок" spellcheck="false">
+      <label class="lbl" for="nameInput" data-ru="Ваше имя">Your name</label>
+      <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="Player" data-ru-placeholder="Игрок" spellcheck="false">
 
       <div id="inviteBlock" hidden>
-        <p class="invite">Вас пригласили в комнату <b id="inviteRoom"></b><span id="inviteMode"></span></p>
-        <button type="button" id="btnJoin" class="btn primary">Играть</button>
-        <button type="button" id="btnNewRoom" class="btn small">Создать свою комнату</button>
+        <p class="invite"><span data-ru="Вас пригласили в комнату">You're invited to room</span> <b id="inviteRoom"></b><span id="inviteMode"></span></p>
+        <button type="button" id="btnJoin" class="btn primary" data-ru="Играть">Play</button>
+        <button type="button" id="btnNewRoom" class="btn small" data-ru="Создать свою комнату">Create your own room</button>
       </div>
 
       <div id="createBlock">
-        <div class="mode" role="radiogroup" aria-label="Режим игры">
-          <button type="button" class="mode-btn" id="modeFfa" role="radio" aria-checked="true">Все против всех</button>
-          <button type="button" class="mode-btn" id="modeGang" role="radio" aria-checked="false">Банда</button>
+        <div class="mode" role="radiogroup" aria-label="Game mode" data-ru-aria-label="Режим игры">
+          <button type="button" class="mode-btn" id="modeFfa" role="radio" aria-checked="true" data-ru="Все против всех">Free for all</button>
+          <button type="button" class="mode-btn" id="modeGang" role="radio" aria-checked="false" data-ru="Банда">Gang</button>
         </div>
         <p class="mode-note" id="modeNote"></p>
-        <button type="button" id="btnCreate" class="btn primary">Создать комнату</button>
-        <div class="or">или войдите по коду комнаты</div>
+        <button type="button" id="btnCreate" class="btn primary" data-ru="Создать комнату">Create room</button>
+        <div class="or" data-ru="или войдите по коду комнаты">or join with a room code</div>
         <div class="row">
-          <input id="codeInput" type="text" maxlength="16" placeholder="Код комнаты" autocapitalize="off" autocomplete="off" spellcheck="false">
-          <button type="button" id="btnCode" class="btn">Войти</button>
+          <input id="codeInput" type="text" maxlength="16" placeholder="Room code" data-ru-placeholder="Код комнаты" autocapitalize="off" autocomplete="off" spellcheck="false">
+          <button type="button" id="btnCode" class="btn" data-ru="Войти">Join</button>
         </div>
       </div>
 
       <p id="menuStatus" role="status" aria-live="polite"></p>
 
       <details class="help">
-        <summary>Как играть</summary>
+        <summary data-ru="Как играть">How to play</summary>
         <ul>
-          <li><b>Компьютер:</b> WASD - ходить, Shift - рывок, мышь - целиться, левая кнопка - стрелять (держите - очередь), 1-9, 0 или колесо - оружие (по порядку на панели), F - сесть в машину и выйти, H - гудок, V - вид ближе/дальше, T - микрофон в голосовом чате, M - карта, Tab - счёт.</li>
-          <li><b>В машине:</b> W/S - газ и тормоз, A/D - руль, пробел - ручник (тормоз и занос), мышь - стрелять из окна, Q/E - радио (русские хиты 90-х и 2000-х, есть «выключено»).</li>
-          <li><b>Телефон:</b> левый палец - ходить и рулить, правый палец - целиться и стрелять (держите - стреляет без остановки, короткое касание - один выстрел). Кнопки справа: рывок, сесть в машину, гудок, радио.</li>
-          <li>Оружие и патроны появляются на карте примерно раз в 15 секунд, ещё больше - в ящиках. Ящики появляются снова.</li>
-          <li>Гриб: +50 здоровья и 10 секунд кислотных красок; пока действует - бегаете без устали, стреляете на рывке и получаете вдвое меньше урона.</li>
-          <li>Деньги: за игрока $100, за полицейского $50, за спецназ и армию $80, за вертолёт $300; с прохожих иногда выпадает пачка. Погиб - половина денег выпадает на землю. Тратить - встав на круг: больница лечит сразу, +10 здоровья за $5; в оружейном вверху выбираете оружие (пистолет $50 ... миниган $1000), купленное, что уже есть, - пополняет патроны; в автомастерской на машине - перекраска, ремонт и снятие розыска ($1000).</li>
-          <li>Ломается всё: стёкла, заборы, ящики, деревья, кирпичные стены. Бочки и машины взрываются. Разрушенные дома через минуту без стрельбы отстраиваются сами, по кирпичику.</li>
-          <li>Машины с водителями ездят по дорогам - не выбегайте перед ними.</li>
-          <li>Мотоциклы стоят у больницы, у оружейного и на стоянках: быстрее и вертлявее машин, но водителя видно - в него попадают пули, огонь и взрывы.</li>
-          <li>Чем больше звёзд розыска, тем серьёзнее погоня: 3 - спецназ, 4 - вертолёт (не стреляет, но высаживает спецназ; целитесь в него - пули летят вверх), 5 - танки (не стреляют, но давят). Грузовик спецназа и танк можно угнать: в танке атака - выстрел из пушки.</li>
-          <li>Зайдите в дом - крыша станет прозрачной. Тех, кто внутри, снаружи не видно.</li>
-          <li><b>Режимы</b> выбираются при создании комнаты и приходят друзьям вместе со ссылкой. «Все против всех» - каждый сам за себя. «Банда» - все в комнате заодно: друг друга не ранят ничем (пули пролетают сквозь своих), розыск общий - натворил один, ищут всех, и звёзды гаснут, только когда погибли все; погибший появляется рядом со своими. Свои подписаны зелёным.</li>
+          <li data-ru-html="&lt;b&gt;Компьютер:&lt;/b&gt; WASD - ходить, Shift - рывок, мышь - целиться, левая кнопка - стрелять (держите - очередь), 1-9, 0 или колесо - оружие (по порядку на панели), F - сесть в машину и выйти, H - гудок, V - вид ближе/дальше, T - микрофон в голосовом чате, M - карта, Tab - счёт."><b>Computer:</b> WASD - move, Shift - sprint, mouse - aim, left button - shoot (hold for full auto), 1-9, 0 or the wheel - weapons (in toolbar order), F - get in and out of cars, H - horn, V - zoom in or out, T - mic in voice chat, M - map, Tab - scoreboard.</li>
+          <li data-ru-html="&lt;b&gt;В машине:&lt;/b&gt; W/S - газ и тормоз, A/D - руль, пробел - ручник (тормоз и занос), мышь - стрелять из окна, Q/E - радио (русские хиты 90-х и 2000-х, есть «выключено»)."><b>In a car:</b> W/S - gas and brake, A/D - steer, Space - handbrake (brake and drift), mouse - shoot out of the window, Q/E - radio (80s, 90s and 2000s hits, eurodance, synthwave, rock, or off).</li>
+          <li data-ru-html="&lt;b&gt;Телефон:&lt;/b&gt; левый палец - ходить и рулить, правый палец - целиться и стрелять (держите - стреляет без остановки, короткое касание - один выстрел). Кнопки справа: рывок, сесть в машину, гудок, радио."><b>Phone:</b> left thumb - walk and steer, right thumb - aim and shoot (hold to keep firing, a quick tap fires once). Buttons on the right: sprint, get in a car, horn, radio.</li>
+          <li data-ru="Оружие и патроны появляются на карте примерно раз в 15 секунд, ещё больше - в ящиках. Ящики появляются снова.">Weapons and ammo show up on the map about every 15 seconds, and crates hold even more. Crates come back.</li>
+          <li data-ru="Гриб: +50 здоровья и 10 секунд кислотных красок; пока действует - бегаете без устали, стреляете на рывке и получаете вдвое меньше урона.">Mushroom: +50 health and 10 seconds of acid colors. While it lasts, you never get tired, you can shoot while sprinting and you take half the damage.</li>
+          <li data-ru="Деньги: за игрока $100, за полицейского $50, за спецназ и армию $80, за вертолёт $300; с прохожих иногда выпадает пачка. Погиб - половина денег выпадает на землю. Тратить - встав на круг: больница лечит сразу, +10 здоровья за $5; в оружейном вверху выбираете оружие (пистолет $50 ... миниган $1000), купленное, что уже есть, - пополняет патроны; в автомастерской на машине - перекраска, ремонт и снятие розыска ($1000).">Money: $100 for a player, $50 for a cop, $80 for SWAT and army, $300 for a helicopter; pedestrians sometimes drop a wad of cash. When you die, half your money drops on the ground. To spend it, step onto a circle: the hospital heals you on the spot, +10 health for $5; at the gun shop you pick a weapon at the top of the screen (pistol $50 ... minigun $1000), and buying one you already have refills its ammo; at the garage, in a car, you get a respray, a repair and a clean record ($1000).</li>
+          <li data-ru="Ломается всё: стёкла, заборы, ящики, деревья, кирпичные стены. Бочки и машины взрываются. Разрушенные дома через минуту без стрельбы отстраиваются сами, по кирпичику.">Everything breaks: glass, fences, crates, trees, brick walls. Barrels and cars explode. Wrecked buildings rebuild themselves brick by brick after a minute without gunfire.</li>
+          <li data-ru="Машины с водителями ездят по дорогам - не выбегайте перед ними.">Cars with drivers use the roads - don't run out in front of them.</li>
+          <li data-ru="Мотоциклы стоят у больницы, у оружейного и на стоянках: быстрее и вертлявее машин, но водителя видно - в него попадают пули, огонь и взрывы.">Motorcycles are parked by the hospital, the gun shop and in parking lots: faster and nimbler than cars, but the rider is exposed - bullets, fire and blasts can hit you.</li>
+          <li data-ru="Чем больше звёзд розыска, тем серьёзнее погоня: 3 - спецназ, 4 - вертолёт (не стреляет, но высаживает спецназ; целитесь в него - пули летят вверх), 5 - танки (не стреляют, но давят). Грузовик спецназа и танк можно угнать: в танке атака - выстрел из пушки.">The more wanted stars, the bigger the chase: 3 - SWAT, 4 - a helicopter (it doesn't shoot but drops SWAT; aim at it and your bullets fly up), 5 - tanks (they don't shoot, they crush). You can steal the SWAT truck and the tank: in the tank, attack fires the cannon.</li>
+          <li data-ru="Зайдите в дом - крыша станет прозрачной. Тех, кто внутри, снаружи не видно.">Walk into a building and its roof turns see-through. Nobody outside can see who's inside.</li>
+          <li data-ru-html="&lt;b&gt;Режимы&lt;/b&gt; выбираются при создании комнаты и приходят друзьям вместе со ссылкой. «Все против всех» - каждый сам за себя. «Банда» - все в комнате заодно: друг друга не ранят ничем (пули пролетают сквозь своих), розыск общий - натворил один, ищут всех, и звёзды гаснут, только когда погибли все; погибший появляется рядом со своими. Свои подписаны зелёным."><b>Modes</b> are picked when you create a room and travel to your friends with the link. "Free for all" - everyone for themselves. "Gang" - the whole room is on one side: you can't hurt each other at all (bullets pass through your own), the wanted level is shared - one of you messes up and all of you get hunted, and the stars only go out once everyone is dead; a fallen member respawns next to the others. Your crew is labeled in green.</li>
         </ul>
       </details>
     </div>
   </main>
 
   <!-- ДОСТУПНОСТЬ (в меню; в игре - в настройках под шестерёнкой) -->
-  <button type="button" id="a11yBtn" aria-controls="a11yPanel" aria-expanded="false" aria-label="Настройки доступности">
+  <button type="button" id="a11yBtn" aria-controls="a11yPanel" aria-expanded="false" aria-label="Accessibility settings" data-ru-aria-label="Настройки доступности">
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="4" r="2" fill="currentColor"/><path d="M5 8.5l7 1.5 7-1.5M12 10v5m0 0l-3.5 6M12 15l3.5 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
   </button>
   <div id="a11yPanel" role="dialog" aria-modal="false" aria-labelledby="a11yTitle" hidden>
-    <div class="a11y-title" id="a11yTitle">Доступность</div>
-    <button type="button" class="a11y-opt" data-k="contrast" aria-pressed="false">Высокий контраст</button>
-    <button type="button" class="a11y-opt" data-k="large" aria-pressed="false">Крупный текст</button>
-    <button type="button" class="a11y-opt" data-k="motion" aria-pressed="false">Меньше тряски и анимаций</button>
-    <button type="button" class="a11y-opt" data-k="underline" aria-pressed="false">Подчёркивать ссылки</button>
-    <button type="button" id="a11yReset" class="a11y-reset">Сбросить</button>
+    <div class="a11y-title" id="a11yTitle" data-ru="Доступность">Accessibility</div>
+    <button type="button" class="a11y-opt" data-k="contrast" aria-pressed="false" data-ru="Высокий контраст">High contrast</button>
+    <button type="button" class="a11y-opt" data-k="large" aria-pressed="false" data-ru="Крупный текст">Large text</button>
+    <button type="button" class="a11y-opt" data-k="motion" aria-pressed="false" data-ru="Меньше тряски и анимаций">Less shaking and motion</button>
+    <button type="button" class="a11y-opt" data-k="underline" aria-pressed="false" data-ru="Подчёркивать ссылки">Underline links</button>
+    <button type="button" id="a11yReset" class="a11y-reset" data-ru="Сбросить">Reset</button>
   </div>
 
   <script src="shared.js"></script>

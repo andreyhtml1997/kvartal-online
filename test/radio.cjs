@@ -30,7 +30,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const r1 = await waitOn(20000);
     console.log(`сел в машину: радио ${r1.state}, станция «${r1.station}», надпись «${r1.tag}»`);
     check(r1.active && r1.state === 'on', 'в машине заиграло радио');
-    check(r1.station !== '' && r1.station !== '90-е Россия', 'молчащая станция пропущена сама');
+    check(r1.station !== '' && r1.station !== (await kv(() => window.__kv.RADIO[0].name)), 'молчащая станция пропущена сама');
     await pc.screenshot({ path: OUT + '/radio_on.png' });
     await kv(u => { window.__kv.RADIO[0].url = u; }, url0);
     // E - следующая станция
@@ -42,7 +42,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     let off = null;
     for (let i = 0; i < 8 && !off; i++) { await pc.keyboard.press('KeyQ'); await sleep(250); const r = await R(); if (r.station === '') off = r; }
     console.log(`Q: «${off ? off.tag : '-'}»`);
-    check(!!off && off.state === 'off' && /выключено/.test(off.tag), 'Q листает назад, есть позиция «выключено»');
+    check(!!off && off.state === 'off' && /выключено|off/.test(off.tag), 'Q листает назад, есть позиция «выключено»');
     // снова включить и выйти из машины - радио замолкает
     await pc.keyboard.press('KeyE');
     const r3 = await waitOn(15000);

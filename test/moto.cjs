@@ -29,7 +29,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await pc.waitForFunction(() => window.__kv.S.car && window.__kv.S.car.kind === 5, null, { timeout: 5000 }).catch(() => {});
     const onBike = await kv(() => ({ kind: window.__kv.S.car ? window.__kv.S.car.kind : 0, hud: document.getElementById('carText').textContent }));
     check(onBike.kind === 5, 'на мотоцикл можно сесть');
-    check(/Мотоцикл/.test(onBike.hud), `на полоске прочности написано «${onBike.hud}»`);
+    check(/Мотоцикл|Motorcycle/.test(onBike.hud), `на полоске прочности написано «${onBike.hud}»`);
     await sleep(600);
     await pc.screenshot({ path: OUT + '/moto_sit.png', clip: { x: 440, y: 200, width: 400, height: 320 } });
 

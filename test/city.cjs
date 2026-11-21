@@ -62,7 +62,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(300);
     const heads = await pc.$$eval('#board th', l => l.map(e => e.textContent));
     await pc.keyboard.up('Tab');
-    check(heads.includes('Мирные') && heads.includes('Полиция'), `в таблице колонки: ${heads.join(', ')}`);
+    check((heads.includes('Мирные') || heads.includes('Civilians')) && (heads.includes('Полиция') || heads.includes('Police')), `в таблице колонки: ${heads.join(', ')}`);
   } catch (e) {
     ok = false;
     console.log('FAIL исключение:', e.message);
